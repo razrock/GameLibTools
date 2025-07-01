@@ -1,17 +1,17 @@
 """
     Game Library Tools
-    Games dataset
+    Platform games dataset
 
     :author: Milos Jovanovic <milos@tehnocad.rs>
     :copyright: Copyright 2025 by Milos Jovanovic
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
-from gamelibtools.gameinfo import *
+from gamelibtools.gamestats import *
 from gamelibtools.util import *
 
-class GameDataset:
-    """ Games dataset """
+class PlatformDataset:
+    """ Platform games dataset """
 
     def __init__(self):
         """ Class constructor """
@@ -29,25 +29,23 @@ class GameDataset:
 
         # Update stats
         if gameinf.has_regions():
-            for platform, pinf in gameinf.platforms.items():
-                exc = pinf.is_exclusive()
-                if pinf.has_pal:
-                    self.stats.total_pal += 1
-                    if exc:
-                        self.stats.exclusive_pal += 1
-                if pinf.has_jp:
-                    self.stats.total_jp += 1
-                    if exc:
-                        self.stats.exclusive_jp += 1
-                if pinf.has_na:
-                    self.stats.total_na += 1
-                    if exc:
-                        self.stats.exclusive_na += 1
-                break
+            exc = gameinf.is_exclusive()
+            if gameinf.has_pal:
+                self.stats.total_pal += 1
+                if exc:
+                    self.stats.exclusive_pal += 1
+            if gameinf.has_jp:
+                self.stats.total_jp += 1
+                if exc:
+                    self.stats.exclusive_jp += 1
+            if gameinf.has_na:
+                self.stats.total_na += 1
+                if exc:
+                    self.stats.exclusive_na += 1
 
         # Update companies
-        process_company(self.developers, gameinf.get_developers())
-        process_company(self.publishers, gameinf.get_publishers())
+        process_company(self.developers, gameinf.developers)
+        process_company(self.publishers, gameinf.publishers)
 
 
     def export(self, fpath: str, platform: str, cols: list):
@@ -62,8 +60,9 @@ class GameDataset:
             writer.writerow(cols)
 
             for row in self.games:
-                writer.writerow(row.get_row(platform, cols))
+                writer.writerow(row.get_row(cols))
         print(f"Data table exported to {fpath}")
+
 
     def report(self):
         """ Print dataset summary & statistics """

@@ -12,10 +12,11 @@ import datetime
 import dateutil.parser
 
 
-def extract_html_content(uielem) -> str:
+def extract_html_content(uielem, splitarr: bool) -> str:
     """
     Extract content from the HTML subtree
     :param uielem: HTML element
+    :param splitarr: Split elements into array (text lines)
     :return: Element content (text)
     """
     if uielem is None:
@@ -34,10 +35,16 @@ def extract_html_content(uielem) -> str:
                 ret += ("" if skip else "\r\n") + x.text.strip()
                 skip = False
         elif item.name == "div":
-            ret += extract_html_content(item)
+            ret += extract_html_content(item, splitarr)
         else:
-            ret += item.text.strip()
-    return ret
+            tx = item.text.strip()
+            if splitarr:
+                if tx.lower() == "and" or tx.lower() == ",":
+                    continue
+                ret += ("" if len(ret) == 0 else "\r\n") + tx
+            else:
+                ret += tx
+    return ret.strip()
 
 
 def process_company(data: dict, clist: list):
@@ -94,10 +101,23 @@ def parse_release_date(rdate: str) -> datetime.datetime:
     reldate = None
     tokens = rdate.splitlines()
     for token in tokens:
+        if token == "":
+            continue
         if token.endswith(")"):
             sx = token.rfind(" (")
             token = token[0:sx]
-        pdate = dateutil.parser.parse(token)
+
+        try:
+            pdate = dateutil.parser.parse(token)
+        except Exception as ex:
+            print(ex)
+            # Try to parse invalid formats
+            dtok = token.split('|')
+            if len(dtok) == 3:
+                pdate = dateutil.parser.parse(token.replace('|', '/'))
+            else:
+                continue
+
         if reldate is None or pdate < reldate:
             reldate = pdate
     return reldate
