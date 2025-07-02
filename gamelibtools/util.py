@@ -7,12 +7,10 @@
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
-import csv
-import datetime
-import dateutil.parser
+from zipfile import ZipFile
 
 
-def extract_html_content(uielem, splitarr: bool) -> str:
+def extract_html_content(uielem, splitarr: bool=True) -> str:
     """
     Extract content from the HTML subtree
     :param uielem: HTML element
@@ -36,10 +34,12 @@ def extract_html_content(uielem, splitarr: bool) -> str:
                 skip = False
         elif item.name == "div":
             ret += extract_html_content(item, splitarr)
+        elif item.name == "p":
+            ret += extract_html_content(item, splitarr)
         else:
             tx = item.text.strip()
             if splitarr:
-                if tx.lower() == "and" or tx.lower() == ",":
+                if tx.lower() == "and" or tx.lower() == "," or tx == "/" or tx == "•":
                     continue
                 ret += ("" if len(ret) == 0 else "\r\n") + tx
             else:
@@ -78,46 +78,31 @@ def print_company_games(data: dict, maxcnt: int=10):
         i += 1
 
 
-def write_data(data: list, fpath: str, cols: list):
+def print_array(arr: list):
     """
-    Write data table to a CSV file
-    :param data: Data table
-    :param fpath: File path
-    :param cols: Data columns
+    Print array
+    :param arr: Data array
+    :return: Array text representation
     """
-    with open(fpath, 'w', newline='', encoding='utf8') as csvfile:
-        writer = csv.writer(csvfile, lineterminator='\r\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
-        writer.writerow(cols)
-
-        for row in data:
-            writer.writerow(row)
-    print(f"Data table saved to {fpath}")
-
-def parse_release_date(rdate: str) -> datetime.datetime:
-    """ Parse release date """
-    if rdate is None or rdate == 'Unreleased':
+    if arr is None:
         return None
+    return str(arr)
 
-    reldate = None
-    tokens = rdate.splitlines()
-    for token in tokens:
-        if token == "":
-            continue
-        if token.endswith(")"):
-            sx = token.rfind(" (")
-            token = token[0:sx]
 
-        try:
-            pdate = dateutil.parser.parse(token)
-        except Exception as ex:
-            print(ex)
-            # Try to parse invalid formats
-            dtok = token.split('|')
-            if len(dtok) == 3:
-                pdate = dateutil.parser.parse(token.replace('|', '/'))
-            else:
-                continue
-
-        if reldate is None or pdate < reldate:
-            reldate = pdate
-    return reldate
+def get_zip_uncompressed_size(fpath: str) -> int:
+    """
+    Calculates the total uncompressed size of all files within a ZIP archive.
+    :param fpath: File path
+    :return: Total uncompressed size in bytes
+    """
+    ret = 0
+    try:
+        with ZipFile(fpath, 'r') as zip_file:
+            for member_name in zip_file.namelist():
+                info = zip_file.getinfo(member_name)
+                ret += info.file_size
+    except FileNotFoundError:
+        print(f"Error: ZIP file not found at {fpath}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    return ret

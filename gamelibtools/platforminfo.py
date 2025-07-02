@@ -8,9 +8,12 @@
     :license: See LICENSE.txt for full license information
 """
 import json
-from dateutil.parser import parse
+import dateutil
+from dateutil.parser import parse, ParserError
 from gamelibtools.util import *
 
+
+regions = ['NA', 'PAL', 'EU', 'JP', 'KO', 'AU']
 
 class PlatformInfo:
     """ Game platform info (game version) """
@@ -18,16 +21,13 @@ class PlatformInfo:
     def __init__(self):
         """ Class constructor """
         self.title = ''
+        self.aka = []
         self.developers = []
         self.publishers = []
         self.genres = []
-        self.release_date = None
-        self.release_date_pal = None
-        self.release_date_jp = None
-        self.release_date_na = None
-        self.has_pal = False
-        self.has_jp = False
-        self.has_na = False
+        self.release_date = {}
+        self.regions = []
+        self.flags = []
         self.image_size = 0
 
     def load(self, data: list, schema: list):
@@ -39,12 +39,20 @@ class PlatformInfo:
         if data is None or schema is None:
             return
         if len(data) < len(schema):
-            print(f"Invalid data entry. Invalid field count: {len(data)}, expected {len(schema)} / {data[0] if len(data) > 0 else '-'}")
+            print(f"WARNING: Invalid field count: {len(data)}, expected {len(schema)} / {data[0] if len(data) > 0 else '-'}")
 
-        pinf = PlatformInfo()
         for i in range(0, len(data)):
             if schema[i].lower() == "title":
-                self.title = data[i]
+                if data[i] == "":
+                    print("WARNING: Invalid game title")
+                    continue
+                xlines = data[i].splitlines()
+                self.title = xlines[0]
+                if len(xlines) > 1:
+                    for i in range(1, len(xlines)):
+                        if xlines[i] == '':
+                            continue
+                        self.aka.append(xlines[1])
             elif schema[i].lower() == "developers":
                 self.developers = data[i].splitlines()
             elif schema[i].lower() == "publishers":
@@ -52,27 +60,20 @@ class PlatformInfo:
             elif schema[i].lower() == "genre" or schema[i].lower() == "genres":
                 self.genres = data[i].splitlines()
             elif schema[i].lower() == "released":
-                self.release_date = parse_release_date(data[i])
-            elif schema[i].lower() == "released pal":
-                self.release_date_pal = parse_release_date(data[i])
-            elif schema[i].lower() == "released jp":
-                self.release_date_jp = parse_release_date(data[i])
-            elif schema[i].lower() == "released na":
-                self.release_date_na = parse_release_date(data[i])
-            elif schema[i].lower() == "pal":
-                self.has_pal = len(data[i]) > 0
-            elif schema[i].lower() == "jp":
-                self.has_jp = len(data[i]) > 0
-            elif schema[i].lower() == "na":
-                self.has_na = len(data[i]) > 0
-
-        # Check regions & exclusivity
-        if not pinf.has_pal and self.release_date_pal is not None:
-            self.has_pal = True
-        if not pinf.has_jp and self.release_date_jp is not None:
-            self.has_jp = True
-        if not pinf.has_na and self.release_date_na is not None:
-            self.has_na = True
+                self._parse_release_date(data[i])
+            elif schema[i].lower().startswith("released "):
+                reg = schema[i].lower().replace("released ", "").upper()
+                self._parse_release_date(data[i], reg)
+            elif schema[i].upper() in regions:
+                if len(data[i]) > 0:
+                    self.regions.append(schema[i].upper())
+            elif schema[i].lower() == "flags":
+                self.flags = []
+                for x in data[i].splitlines():
+                    if x:
+                        self.flags.append(x)
+            else:
+                print(f"WARNING: Unknown data field: {schema[i]}")
 
     def get_row(self, cols: list) -> list:
         """
@@ -83,106 +84,129 @@ class PlatformInfo:
         ret = []
         for col in cols:
             if col.lower() == "title":
-                ret.append(self.title)
+                tinf = self.title
+                for x in self.aka:
+                    tinf += "\r\n" + x
+                ret.append(tinf)
             elif col.lower() == "developers":
-                ret.append(str(self.developers))
+                ret.append(print_array(self.developers))
             elif col.lower() == "publishers":
-                ret.append(str(self.publishers))
+                ret.append(print_array(self.publishers))
             elif col.lower() == "genre" or col.lower() == "genres":
-                ret.append(str(self.genres))
+                ret.append(print_array(self.genres))
             elif col.lower() == "released":
-                ret.append(self.release_date.strftime('%Y-%m-%d') if self.release_date else None)
-            elif col.lower() == "released pal":
-                ret.append(self.release_date_pal.strftime('%Y-%m-%d') if self.release_date_pal else None)
-            elif col.lower() == "released jp":
-                ret.append(self.release_date_jp.strftime('%Y-%m-%d') if self.release_date_jp else None)
-            elif col.lower() == "released na":
-                ret.append(self.release_date_na.strftime('%Y-%m-%d') if self.release_date_na else None)
-            elif col.lower() == "pal":
-                ret.append(self.has_pal)
-            elif col.lower() == "jp":
-                ret.append(self.has_jp)
-            elif col.lower() == "na":
-                ret.append(self.has_na)
-            elif col.lower() == "regions":
-                ret.append(self.has_regions())
+                rdate = self.get_release_date()
+                ret.append(rdate.strftime('%Y-%m-%d') if rdate else None)
+            elif col.lower().startswith("released "):
+                # Regional release date
+                reg = col.lower().replace("released ", "").upper()
+                rdate = self.get_region_release_date(reg)
+                ret.append(rdate.strftime('%Y-%m-%d') if rdate else None)
+            elif col.upper() in self.regions:
+                ret.append(self.has_region(col.lower()))
             elif col.lower() == "exclusive":
                 ret.append(self.is_exclusive())
+            elif col.lower() == "regions":
+                ret.append(print_array(self.regions))
             elif col.lower() == "size":
                 ret.append(self.image_size)
+            elif col.lower() == "flags":
+                ret.append(print_array(self.flags))
         return ret
 
-    def to_json(self) -> str:
-        """ Serialize object defintion to JSON """
-        xmap = {
-            'title': self.title,
-            'developers': self.developers,
-            'publishers': self.publishers,
-            'genres': self.genres,
-            'released': self.release_date.strftime('%Y-%m-%d') if self.release_date else None,
-            'regions': self.has_regions,
-            'exclusive': self.is_exclusive,
-            'size': self.image_size
-        }
-        if self.has_regions:
-            xmap['pal'] = self.has_pal
-            xmap['jp'] = self.has_jp
-            xmap['na'] = self.has_na
-            if self.release_date_pal:
-                xmap['releasedpal'] = self.release_date_pal.strftime('%Y-%m-%d')
-            if self.release_date_pal:
-                xmap['releasedjp'] = self.release_date_jp.strftime('%Y-%m-%d')
-            if self.release_date_pal:
-                xmap['releasedna'] = self.release_date_na.strftime('%Y-%m-%d')
-        return json.dumps(xmap)
+    def resolve_flags(self, fmap: dict):
+        """ Resolve flag values """
+        nflags = []
+        for x in self.flags:
+            if x not in fmap:
+                print(f"WARNING: Unknown platform data flag - {x}")
+            nflags.append(fmap[x])
+        self.flags = nflags
 
-    def from_json(self, desc: str):
-        """ Parse object defintion from JSON string """
-        dobj = json.loads(desc)
-        if not dobj:
-            return
-        if 'title' in dobj:
-            self.title = dobj['title']
-        if 'developers' in dobj:
-            self.developers = dobj['developers']
-        if 'publishers' in dobj:
-            self.publishers = dobj['publishers']
-        if 'genres' in dobj:
-            self.genres = dobj['genres']
-        if 'released' in dobj:
-            self.release_date = parse(dobj['released'])
-        if 'releasedpal' in dobj:
-            self.release_date_pal = parse(dobj['releasedpal'])
-        if 'releasedjp' in dobj:
-            self.release_date_jp = parse(dobj['releasedjp'])
-        if 'releasedna' in dobj:
-            self.release_date_na = parse(dobj['releasedna'])
-        if 'pal' in dobj:
-            self.has_pal = dobj['pal']
-        if 'jp' in dobj:
-            self.has_jp = dobj['jp']
-        if 'na' in dobj:
-            self.has_na = dobj['na']
-        if 'size' in dobj:
-            self.image_size = dobj['size']
-        return
-
-    def calc_release_date(self):
+    def get_release_date(self):
         """ Calculate game release date """
-        if self.release_date_pal and (not self.release_date or self.release_date > self.release_date_pal):
-            self.release_date = self.release_date_pal
-        if self.release_date_jp and (not self.release_date or self.release_date > self.release_date_jp):
-            self.release_date = self.release_date_jp
-        if self.release_date_na and (not self.release_date or self.release_date > self.release_date_na):
-            self.release_date = self.release_date_na
+        if 'WW' in self.release_date:
+            return self.release_date['WW']
+        ret = None
+        for rdate in self.release_date:
+            if ret is None or rdate < ret:
+                ret = rdate
+        return ret
+
+    def get_region_release_date(self, reg: str):
+        """ Get a regional release date """
+        if reg.upper() == 'WW' or reg == '':
+            return self.get_release_date()
+        if reg.upper() in self.release_date:
+            return self.release_date[reg]
+        ret = None
+        for xreg in self._get_region_alts(reg.upper()):
+            if xreg in self.release_date:
+                if ret is None or self.release_date[xreg] < ret:
+                    ret = self.release_date[xreg]
+        return ret
+
+    def has_region(self, reg: str) -> bool:
+        """ Check if game has a regional release """
+        if reg.upper() in self.regions:
+            return True
+        for xreg in self._get_region_alts(reg.upper()):
+            if xreg in self.regions:
+                return True
+        return False
 
     def has_regions(self) -> bool:
         """ Check if game has regional versions """
-        if self.has_pal or self.has_jp or self.has_na:
-            return True
-        return False
+        return len(self.regions) > 0
 
     def is_exclusive(self):
         """ Check if game version is region exclusive """
-        reg = (1 if self.has_pal else 0) + (1 if self.has_jp else 0) + (1 if self.has_na else 0)
-        return reg == 1
+        return len(self.regions) == 1
+
+    def _get_region_alts(self, reg: str) -> list:
+        """ Get alternate region names """
+        ret = []
+        if reg == 'PAL':
+            return ['EU', 'AU']
+        if reg == 'AU' or reg == 'EU':
+            return ['PAL']
+        if reg == 'JP':
+            return ['KO']
+        if reg == 'KO':
+            return ['JP']
+        return []
+
+    def _parse_release_date(self, rdate: str, dreg: str='WW'):
+        """
+        Parse release date info
+        :param rdate: Release date or a list of release dates with region designators
+        :param dreg: Default / fallback region
+        """
+        if not rdate or rdate == 'Unreleased' or rdate.startswith("Unreleased"):
+            return
+        tokens = rdate.splitlines()
+        for x in tokens:
+            if x == "":
+                continue
+            reg = dreg
+            if x.endswith(")"):
+                sx = x.rfind(" (")
+                reg = x[sx + 2:-1].upper()
+                x = x[0:sx]
+
+            try:
+                pdate = dateutil.parser.parse(x)
+            except ParserError as ex:
+                print(f"WARNING: {ex}")
+                dtok = x.split('|')
+                if len(dtok) == 3:
+                    # Try to parse invalid formats
+                    pdate = dateutil.parser.parse(x.replace('|', '/'))
+                else:
+                    continue
+            self.release_date[reg] = pdate
+
+            if reg != 'WW' and reg not in self.regions:
+                if reg not in regions:
+                    print("WARNING: Unknown region")
+                self.regions.append(reg)

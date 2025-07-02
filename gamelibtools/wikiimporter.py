@@ -21,6 +21,11 @@ wiki_import_map = {
         'url': 'https://en.wikipedia.org/wiki/List_of_Xbox_games',
         'schema': ["Title", "Developers", "Publishers", "Released PAL", "Released JP", "Released NA"]
     },
+    'xbox360': {
+        'url': ['https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(M-Z)'],
+        'schema': ["Title", "Genres", "Developers", "Publishers", "Released NA", "Released EU", "Released JP", "Released AU", "Flags"],
+        'flags': {'XBLA': 'Xbox Live Arcade'}
+    },
     'ps1': {
         'url': ['https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(M-Z)'],
         'schema': ["Title", "Developers", "Publishers", "Released JP", "Released PAL", "Released NA"]
@@ -29,6 +34,16 @@ wiki_import_map = {
         'url': ['https://en.wikipedia.org/wiki/List_of_PlayStation_2_games_(A-K)', 'https://en.wikipedia.org/wiki/List_of_PlayStation_2_games_(L-Z)'],
         'schema': ["Title", "Developers", "Publishers", "Released", "JP", "PAL", "NA"],
         'headerrows': 1
+    },
+    'ps3': {
+        'url': [
+            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(A-C)',
+            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(D-I)',
+            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(J-P)',
+            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(Q-Z)'
+        ],
+        'schema': ["Title", "Developers", "Released JP", "Released PAL", "Released NA", "Flags"],
+        'flags': {'3D': 'Stereoscopic 3D', 'M': 'Playstation Move', 'SV': 'SimulView', 'F2P': 'Free-to-play', 'E': 'PlayStation Eye', 'D': 'Digital Only'}
     }
 }
 
@@ -58,27 +73,33 @@ class GameImporter:
             platformdata = PlatformDataset()
             acttableid = config['tableid'] if 'tableid' in config else self.tableid
             actheaderrows = config['headerrows'] if 'headerrows' in config else self.header_rows
-            print(f"\nImporting game data for platform {platform}")
+            print(f"\n** Importing game data for platform {platform.upper()}")
+            print(f"====================================================================================================")
             if 'sections' in config and config['sections']:
                 for letter in self.letters:
                     acturl = config['url'].replace('{TOKEN}', letter)
-                    self.import_from_wiki(platform, acturl, acttableid, config['schema'], actheaderrows, platformdata)
+                    self.import_from_wiki(acturl, acttableid, config['schema'], actheaderrows, platformdata)
             elif isinstance(config['url'], list):
                 for xurl in config['url']:
-                    self.import_from_wiki(platform, xurl, acttableid, config['schema'], actheaderrows, platformdata)
+                    self.import_from_wiki(xurl, acttableid, config['schema'], actheaderrows, platformdata)
             else:
-                self.import_from_wiki(platform, config['url'], acttableid, config['schema'], actheaderrows, platformdata)
+                self.import_from_wiki(config['url'], acttableid, config['schema'], actheaderrows, platformdata)
 
-            print(f"Data extracted - {len(platformdata.games)} entries found. Exporting data...")
-            if len(platformdata.games) > 0:
-                platformdata.export(self._get_file_path(platform), platform, config['schema'])
-            print(" ")
+            if 'flags' in config and 'Flags' in config['schema']:
+                print("Resolving platform flags...")
+                for gameinf in platformdata.games:
+                    gameinf.resolve_flags(config['flags'])
+
+            print(f"Data extracted - {len(platformdata.games)} entries found")
             platformdata.report()
+            if len(platformdata.games) > 0:
+                print(f"Exporting data...")
+                platformdata.export(self._get_file_path(platform), config['schema'])
+            print(" ")
 
-    def import_from_wiki(self, platform: str, url: str, tableid: str, schema: list, headrows: int, data):
+    def import_from_wiki(self, url: str, tableid: str, schema: list, headrows: int, data):
         """
         Import games table from the wikipedia page
-        :param platform: Platform name
         :param url: Page URL
         :param tableid: Table element ID
         :param schema: Table schema (columns list)
@@ -98,7 +119,7 @@ class GameImporter:
                 for cell in row.contents:
                     if cell.name != "th" and cell.name != "td":
                         continue
-                    entry.append(extract_html_content(cell, self._is_array_field(schema[cind])))
+                    entry.append(extract_html_content(cell))
                     cind += 1
                     if cind >= len(schema):
                         break
