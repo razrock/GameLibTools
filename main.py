@@ -11,6 +11,7 @@ import sys
 import argparse
 
 from gamelibtools.wikiimporter import *
+from gamelibtools.logger import *
 
 def main():
     """ Application entry point """
@@ -20,6 +21,7 @@ def main():
     args = parser.parse_args()
 
     # Command selector
+    Logger.set_level(Logger.LVLMSG)
     try:
         if args.command == "import":
             datamgr = GameImporter()

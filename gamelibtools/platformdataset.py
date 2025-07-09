@@ -9,6 +9,7 @@
 """
 import csv
 from gamelibtools.gamestats import *
+from gamelibtools.logger import Logger
 from gamelibtools.util import *
 
 class PlatformDataset:
@@ -19,6 +20,7 @@ class PlatformDataset:
         self.games = []
         self.developers = {}
         self.publishers = {}
+        self.genres = {}
         self.regions = []
         self.stats = GameStats()
 
@@ -39,8 +41,9 @@ class PlatformDataset:
                 self.stats.add_exclusive(gameinf.regions[0])
 
         # Update companies
-        process_company(self.developers, gameinf.developers)
-        process_company(self.publishers, gameinf.publishers)
+        process_stat_list(self.developers, gameinf.developers)
+        process_stat_list(self.publishers, gameinf.publishers)
+        process_stat_list(self.genres, gameinf.genres)
 
 
     def export(self, fpath: str, cols: list):
@@ -55,7 +58,7 @@ class PlatformDataset:
 
             for row in self.games:
                 writer.writerow(row.get_row(cols))
-        print(f"Data table exported to {fpath}")
+        Logger.log(f"Data table exported to {fpath}")
 
 
     def report(self):
@@ -65,13 +68,21 @@ class PlatformDataset:
         for reg in self.regions:
             reginf += ('' if len(reginf) == 0 else ' | ') + f"{reg}: {self.stats.get_region_count(reg):4}"
             excinf += ('' if len(excinf) == 0 else ' | ') + f"{reg}: {self.stats.get_exclusives(reg):4}"
-        print(f"Total:      {len(self.games):4} | {reginf}")
-        print(f"Exclusives: {self.stats.count_exclusives():4} | {excinf}")
-        print(f"Developers: {len(self.developers):4}")
-        print(f"Publishers: {len(self.publishers):4}")
+        Logger.log(f"Total:      {len(self.games):4} | {reginf}")
+        Logger.log(f"Exclusives: {self.stats.count_exclusives():4} | {excinf}")
         if len(self.developers) > 0:
-            print(f"\nTop 10 developers by game count:")
-            print_company_games(self.developers)
+            Logger.log(f"Developers: {len(self.developers):4}")
         if len(self.publishers) > 0:
-            print(f"\nTop 10 publishers by game count:")
-            print_company_games(self.publishers)
+            Logger.log(f"Publishers: {len(self.publishers):4}")
+        if len(self.genres) > 0:
+            Logger.log(f"Genres    : {len(self.genres):4}")
+
+        if len(self.developers) > 0:
+            Logger.log(f"\nTop 10 developers by game count:")
+            print_stat(self.developers)
+        if len(self.publishers) > 0:
+            Logger.log(f"\nTop 10 publishers by game count:")
+            print_stat(self.publishers)
+        if len(self.genres) > 0:
+            Logger.log(f"\nTop 10 genres by game count:")
+            print_stat(self.genres)

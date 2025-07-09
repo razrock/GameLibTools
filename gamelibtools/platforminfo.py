@@ -7,16 +7,16 @@
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
-import json
 import dateutil
 from dateutil.parser import parse, ParserError
+
+from gamelibtools.logger import Logger
 from gamelibtools.util import *
 
 
-regions = ['NA', 'PAL', 'EU', 'JP', 'KO', 'AU']
-
 class PlatformInfo:
     """ Game platform info (game version) """
+    REGIONS = ['NA', 'PAL', 'EU', 'JP', 'KOR', 'TW', 'AU', 'DE', 'UK', 'NZ']
 
     def __init__(self):
         """ Class constructor """
@@ -39,24 +39,29 @@ class PlatformInfo:
         if data is None or schema is None:
             return
         if len(data) < len(schema):
-            print(f"WARNING: Invalid field count: {len(data)}, expected {len(schema)} / {data[0] if len(data) > 0 else '-'}")
+            Logger.warning(f"WARNING: Invalid field count: {len(data)}, expected {len(schema)} / {data[0] if len(data) > 0 else '-'}")
 
         for i in range(0, len(data)):
             if schema[i].lower() == "title":
                 if data[i] == "":
-                    print("WARNING: Invalid game title")
+                    Logger.warning("WARNING: Invalid game title")
                     continue
                 xlines = data[i].splitlines()
                 self.title = xlines[0]
                 if len(xlines) > 1:
-                    for i in range(1, len(xlines)):
-                        if xlines[i] == '':
+                    Logger.dbgmsg(f"Multiple titles found for {self.title}")
+                    for j in range(1, len(xlines)):
+                        if xlines[j] == '':
                             continue
-                        self.aka.append(xlines[1])
+                        self.aka.append(xlines[j])
             elif schema[i].lower() == "developers":
                 self.developers = data[i].splitlines()
+                if len(self.developers) == 0:
+                    Logger.warning(f"WARNING: Invalid game developers / {self.title}")
             elif schema[i].lower() == "publishers":
                 self.publishers = data[i].splitlines()
+                if len(self.publishers) == 0:
+                    Logger.warning(f"WARNING: Invalid game publishers / {self.title}")
             elif schema[i].lower() == "genre" or schema[i].lower() == "genres":
                 self.genres = data[i].splitlines()
             elif schema[i].lower() == "released":
@@ -64,7 +69,7 @@ class PlatformInfo:
             elif schema[i].lower().startswith("released "):
                 reg = schema[i].lower().replace("released ", "").upper()
                 self._parse_release_date(data[i], reg)
-            elif schema[i].upper() in regions:
+            elif schema[i].upper() in PlatformInfo.REGIONS:
                 if len(data[i]) > 0:
                     self.regions.append(schema[i].upper())
             elif schema[i].lower() == "flags":
@@ -73,7 +78,7 @@ class PlatformInfo:
                     if x:
                         self.flags.append(x)
             else:
-                print(f"WARNING: Unknown data field: {schema[i]}")
+                Logger.warning(f"WARNING: Unknown data field: {schema[i]} / {self.title}")
 
     def get_row(self, cols: list) -> list:
         """
@@ -119,7 +124,7 @@ class PlatformInfo:
         nflags = []
         for x in self.flags:
             if x not in fmap:
-                print(f"WARNING: Unknown platform data flag - {x}")
+                Logger.warning(f"WARNING: Unknown platform data flag - {x}")
             nflags.append(fmap[x])
         self.flags = nflags
 
@@ -165,14 +170,13 @@ class PlatformInfo:
 
     def _get_region_alts(self, reg: str) -> list:
         """ Get alternate region names """
-        ret = []
         if reg == 'PAL':
-            return ['EU', 'AU']
-        if reg == 'AU' or reg == 'EU':
+            return ['EU', 'AU', 'UK', 'DE', 'NZ']
+        if reg == 'AU' or reg == 'EU' or reg == 'DE' or reg == 'UK' or reg == 'NZ':
             return ['PAL']
         if reg == 'JP':
-            return ['KO']
-        if reg == 'KO':
+            return ['KOR', 'TW']
+        if reg == 'KOR' or reg == 'TW':
             return ['JP']
         return []
 
@@ -197,16 +201,25 @@ class PlatformInfo:
             try:
                 pdate = dateutil.parser.parse(x)
             except ParserError as ex:
-                print(f"WARNING: {ex}")
+                Logger.warning(f"WARNING: {ex} / {self.title}")
                 dtok = x.split('|')
                 if len(dtok) == 3:
                     # Try to parse invalid formats
                     pdate = dateutil.parser.parse(x.replace('|', '/'))
                 else:
                     continue
+            if reg != 'WW' and reg not in PlatformInfo.REGIONS:
+                if reg == 'GER':
+                    reg = 'DE'
+                elif reg == 'AS':
+                    reg = 'JP'
+                elif reg == 'AUS':
+                    reg = 'AU'
+                elif len(reg) > 2:
+                    reg = reg[0:2]
+                if reg not in PlatformInfo.REGIONS:
+                    Logger.warning(f"WARNING: Unknown region / {self.title}")
             self.release_date[reg] = pdate
 
             if reg != 'WW' and reg not in self.regions:
-                if reg not in regions:
-                    print("WARNING: Unknown region")
                 self.regions.append(reg)

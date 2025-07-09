@@ -10,6 +10,7 @@
 import os
 import requests
 import string
+
 from gamelibtools.platformdataset import *
 from gamelibtools.platforminfo import *
 from bs4 import BeautifulSoup
@@ -23,8 +24,8 @@ wiki_import_map = {
     },
     'xbox360': {
         'url': ['https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(M-Z)'],
-        'schema': ["Title", "Genres", "Developers", "Publishers", "Released NA", "Released EU", "Released JP", "Released AU", "Flags"],
-        'flags': {'XBLA': 'Xbox Live Arcade'}
+        'schema': ["Title", "Genres", "Developers", "Publishers", "Released NA", "Released EU", "Released JP", "Released AU", "Flags", "Flags"],
+        'flags': {'3D': '3D Support', 'K': 'Kinect', 'DL': 'Downloadable', 'XBLIG': 'Xbox Live Indie', 'XBLA': 'Xbox Live Arcade', 'XBG': 'Xbox One Compatible', 'XE': 'Xbox One Enchanced'}
     },
     'ps1': {
         'url': ['https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(M-Z)'],
@@ -65,7 +66,7 @@ class GameImporter:
             os.makedirs(self.data_dir)
         for platform, config in wiki_import_map.items():
             if self.skip_existing and os.path.exists(self._get_file_path(platform)) and selplatform == '':
-                print(f"\nGame data for platform {platform} found, skipping platform")
+                Logger.log(f"\nGame data for platform {platform} found, skipping platform")
                 continue
             if selplatform != '' and selplatform != platform:
                 continue
@@ -73,8 +74,9 @@ class GameImporter:
             platformdata = PlatformDataset()
             acttableid = config['tableid'] if 'tableid' in config else self.tableid
             actheaderrows = config['headerrows'] if 'headerrows' in config else self.header_rows
-            print(f"\n** Importing game data for platform {platform.upper()}")
-            print(f"====================================================================================================")
+            hasregs = config['regions'] if 'regions' in config else True
+            Logger.sysmsg(f"\n** Importing game data for platform {platform.upper()}")
+            Logger.sysmsg(f"====================================================================================================")
             if 'sections' in config and config['sections']:
                 for letter in self.letters:
                     acturl = config['url'].replace('{TOKEN}', letter)
@@ -86,16 +88,19 @@ class GameImporter:
                 self.import_from_wiki(config['url'], acttableid, config['schema'], actheaderrows, platformdata)
 
             if 'flags' in config and 'Flags' in config['schema']:
-                print("Resolving platform flags...")
+                Logger.log("Resolving platform flags...")
                 for gameinf in platformdata.games:
                     gameinf.resolve_flags(config['flags'])
 
-            print(f"Data extracted - {len(platformdata.games)} entries found")
+            # TODO: Change region schema
+            # TODO: Fixed columns for export -> compact release dates
+
+            Logger.sysmsg(f"Data extracted - {len(platformdata.games)} entries found")
             platformdata.report()
             if len(platformdata.games) > 0:
-                print(f"Exporting data...")
+                Logger.log(f"Exporting data...")
                 platformdata.export(self._get_file_path(platform), config['schema'])
-            print(" ")
+            Logger.log(" ")
 
     def import_from_wiki(self, url: str, tableid: str, schema: list, headrows: int, data):
         """
@@ -129,7 +134,7 @@ class GameImporter:
                 gameinf.load(entry, schema)
                 data.add(gameinf)
             except Exception as err:
-                print(err)
+                Logger.error(str(err))
             ind += 1
 
     def _get_file_path(self, platform: str):
@@ -142,19 +147,19 @@ class GameImporter:
         :param url: Page URL
         :param tableid: Data table element ID
         """
-        print(f"Fetching game data from {url}...")
+        Logger.log(f"Fetching game data from {url}...")
         response = requests.get(url)
         html_content = response.text
         if html_content is None:
             return []
 
-        print(f"HTML page downloaded. Parsing HTML for #{tableid} table...")
+        Logger.log(f"HTML page downloaded. Parsing HTML for #{tableid} table...")
         soup = BeautifulSoup(html_content, features="html.parser")
         table = soup.find(id=tableid)
         if table is None:
             return []
 
-        print(f"Data table found. Extracting data...")
+        Logger.log(f"Data table found. Extracting data...")
         rows = table.find("tbody").find_all("tr")
         return rows
 

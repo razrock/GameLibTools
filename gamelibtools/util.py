@@ -9,6 +9,8 @@
 """
 from zipfile import ZipFile
 
+from gamelibtools.logger import Logger
+
 
 def extract_html_content(uielem, splitarr: bool=True) -> str:
     """
@@ -47,13 +49,17 @@ def extract_html_content(uielem, splitarr: bool=True) -> str:
     return ret.strip()
 
 
-def process_company(data: dict, clist: list):
+def process_stat_list(data: dict, clist: list):
     """
-    Add game companies to the company data table
-    :param data: Company data table
-    :param clist: List of companies associated with a title
+    Add tag/company/category to the stat count
+    :param data: Stat count table
+    :param clist: List of items with a title
     """
+    if clist is None:
+        return
     for x in clist:
+        if x == '':
+            continue
         name = x
         if name.endswith(")"):
             sx = name.rfind(" (")
@@ -64,9 +70,9 @@ def process_company(data: dict, clist: list):
             data[name] = 1
 
 
-def print_company_games(data: dict, maxcnt: int=10):
+def print_stat(data: dict, maxcnt: int=10):
     """
-    Print companies by game count
+    Print game count statistics
     :param data: Company data table
     :param maxcnt: Number of companies to display
     """
@@ -74,7 +80,7 @@ def print_company_games(data: dict, maxcnt: int=10):
     for k, v in sorted(data.items(), key=lambda x:x[1], reverse=True):
         if i > maxcnt:
             return
-        print(f"   {i:2} - {k:30} : {v:3}")
+        Logger.log(f"   {i:2} - {k:30} : {v:3}")
         i += 1
 
 
@@ -102,7 +108,7 @@ def get_zip_uncompressed_size(fpath: str) -> int:
                 info = zip_file.getinfo(member_name)
                 ret += info.file_size
     except FileNotFoundError:
-        print(f"Error: ZIP file not found at {fpath}")
+        Logger.error(f"Error: ZIP file not found at {fpath}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        Logger.error(f"An error occurred: {e}")
     return ret
