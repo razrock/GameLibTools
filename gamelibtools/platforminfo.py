@@ -7,6 +7,8 @@
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
+import json
+
 import dateutil
 from dateutil.parser import parse, ParserError
 
@@ -16,7 +18,11 @@ from gamelibtools.util import *
 
 class PlatformInfo:
     """ Game platform info (game version) """
-    REGIONS = ['NA', 'PAL', 'EU', 'JP', 'KOR', 'TW', 'AU', 'DE', 'UK', 'NZ']
+    REGIONS = {
+        'PAL': ['EU', 'AU', 'AUS', 'PAL', 'DE', 'GER', 'UK', 'NZ', 'FR', 'ES', 'IT', 'BE', 'NL', 'RU', 'NO', 'IN', 'IE', 'SAR'],
+        'NTSC-U': ['NA', 'US'],
+        'NTSC-J': ['JP', 'TW', 'KOR', 'KO', 'AS']
+    }
 
     def __init__(self):
         """ Class constructor """
@@ -28,7 +34,6 @@ class PlatformInfo:
         self.release_date = {}
         self.regions = []
         self.flags = []
-        self.image_size = 0
 
     def load(self, data: list, schema: list):
         """
@@ -41,6 +46,7 @@ class PlatformInfo:
         if len(data) < len(schema):
             Logger.warning(f"WARNING: Invalid field count: {len(data)}, expected {len(schema)} / {data[0] if len(data) > 0 else '-'}")
 
+        reg_code_codes = self._get_code_list()
         for i in range(0, len(data)):
             if schema[i].lower() == "title":
                 if data[i] == "":
@@ -50,18 +56,30 @@ class PlatformInfo:
                 self.title = xlines[0]
                 if len(xlines) > 1:
                     Logger.dbgmsg(f"Multiple titles found for {self.title}")
+                    cline = ''
                     for j in range(1, len(xlines)):
                         if xlines[j] == '':
-                            continue
-                        self.aka.append(xlines[j])
+                            if len(cline) > 0:
+                                self.aka.append(cline)
+                                cline = ''
+                        else:
+                            cline += xlines[j]
+                    if len(cline) > 0:
+                        self.aka.append(cline)
             elif schema[i].lower() == "developers":
-                self.developers = data[i].splitlines()
+                self.developers = []
+                for x in data[i].splitlines():
+                    if x != '':
+                        self.developers.append(x)
                 if len(self.developers) == 0:
-                    Logger.warning(f"WARNING: Invalid game developers / {self.title}")
+                    Logger.dbgmsg(f"Missing game developers / {self.title}")
             elif schema[i].lower() == "publishers":
-                self.publishers = data[i].splitlines()
+                self.publishers = []
+                for x in data[i].splitlines():
+                    if x != '':
+                        self.publishers.append(x)
                 if len(self.publishers) == 0:
-                    Logger.warning(f"WARNING: Invalid game publishers / {self.title}")
+                    Logger.dbgmsg(f"Missing game publishers / {self.title}")
             elif schema[i].lower() == "genre" or schema[i].lower() == "genres":
                 self.genres = data[i].splitlines()
             elif schema[i].lower() == "released":
@@ -69,9 +87,11 @@ class PlatformInfo:
             elif schema[i].lower().startswith("released "):
                 reg = schema[i].lower().replace("released ", "").upper()
                 self._parse_release_date(data[i], reg)
-            elif schema[i].upper() in PlatformInfo.REGIONS:
+            elif schema[i].upper() in reg_code_codes:
                 if len(data[i]) > 0:
-                    self.regions.append(schema[i].upper())
+                    reg = self._get_region_from_code(schema[i].upper())
+                    if reg not in self.regions:
+                        self.regions.append(reg)
             elif schema[i].lower() == "flags":
                 self.flags = []
                 for x in data[i].splitlines():
@@ -107,14 +127,17 @@ class PlatformInfo:
                 reg = col.lower().replace("released ", "").upper()
                 rdate = self.get_region_release_date(reg)
                 ret.append(rdate.strftime('%Y-%m-%d') if rdate else None)
+            elif col.lower() == "release dates":
+                tmap = {}
+                for rcode in self.release_date:
+                    tmap[rcode] = self.release_date[rcode].strftime('%Y-%m-%d')
+                ret.append(json.dumps(tmap))
             elif col.upper() in self.regions:
                 ret.append(self.has_region(col.lower()))
             elif col.lower() == "exclusive":
                 ret.append(self.is_exclusive())
             elif col.lower() == "regions":
                 ret.append(print_array(self.regions))
-            elif col.lower() == "size":
-                ret.append(self.image_size)
             elif col.lower() == "flags":
                 ret.append(print_array(self.flags))
         return ret
@@ -134,8 +157,8 @@ class PlatformInfo:
             return self.release_date['WW']
         ret = None
         for rdate in self.release_date:
-            if ret is None or rdate < ret:
-                ret = rdate
+            if ret is None or self.release_date[rdate] < ret:
+                ret = self.release_date[rdate]
         return ret
 
     def get_region_release_date(self, reg: str):
@@ -153,12 +176,7 @@ class PlatformInfo:
 
     def has_region(self, reg: str) -> bool:
         """ Check if game has a regional release """
-        if reg.upper() in self.regions:
-            return True
-        for xreg in self._get_region_alts(reg.upper()):
-            if xreg in self.regions:
-                return True
-        return False
+        return reg.upper() in self.regions
 
     def has_regions(self) -> bool:
         """ Check if game has regional versions """
@@ -170,15 +188,26 @@ class PlatformInfo:
 
     def _get_region_alts(self, reg: str) -> list:
         """ Get alternate region names """
-        if reg == 'PAL':
-            return ['EU', 'AU', 'UK', 'DE', 'NZ']
-        if reg == 'AU' or reg == 'EU' or reg == 'DE' or reg == 'UK' or reg == 'NZ':
-            return ['PAL']
-        if reg == 'JP':
-            return ['KOR', 'TW']
-        if reg == 'KOR' or reg == 'TW':
-            return ['JP']
-        return []
+        if reg in PlatformInfo.REGIONS:
+            return PlatformInfo.REGIONS[reg]
+        x = self._get_region_from_code(reg)
+        return [] if x == '' else [x]
+
+    def _get_region_from_code(self, reg: str) -> str:
+        """ Get region from a country/region code """
+        for x in PlatformInfo.REGIONS:
+            for y in PlatformInfo.REGIONS[x]:
+                if reg == y:
+                    return x
+        return ""
+
+    def _get_code_list(self) -> list:
+        """ Get a list of all country/region codes"""
+        ret = []
+        for x in PlatformInfo.REGIONS:
+            for y in PlatformInfo.REGIONS[x]:
+                ret.append(y)
+        return ret
 
     def _parse_release_date(self, rdate: str, dreg: str='WW'):
         """
@@ -202,24 +231,43 @@ class PlatformInfo:
                 pdate = dateutil.parser.parse(x)
             except ParserError as ex:
                 Logger.warning(f"WARNING: {ex} / {self.title}")
+                sep = '|'
                 dtok = x.split('|')
+                if len(dtok) == 1:
+                    dtok = x.replace('–', '-').split('-')
+                    sep = '-'
+                if len(dtok) == 1:
+                    dtok = x.split('/')
+                    sep = '/'
                 if len(dtok) == 3:
                     # Try to parse invalid formats
                     pdate = dateutil.parser.parse(x.replace('|', '/'))
+                elif len(dtok) == 2:
+                    pdate = dateutil.parser.parse(x.replace('–', '-') + sep + '01')
                 else:
                     continue
-            if reg != 'WW' and reg not in PlatformInfo.REGIONS:
-                if reg == 'GER':
-                    reg = 'DE'
-                elif reg == 'AS':
-                    reg = 'JP'
-                elif reg == 'AUS':
-                    reg = 'AU'
-                elif len(reg) > 2:
-                    reg = reg[0:2]
-                if reg not in PlatformInfo.REGIONS:
-                    Logger.warning(f"WARNING: Unknown region / {self.title}")
-            self.release_date[reg] = pdate
 
-            if reg != 'WW' and reg not in self.regions:
-                self.regions.append(reg)
+            self.release_date[reg] = pdate
+            if reg != 'WW':
+                parsed_regs = []
+                if ',' in reg:
+                    tokens = reg.upper().split(',')
+                    for c in tokens:
+                        c = c.strip()
+                        if c == '':
+                            continue
+                        fnd_reg = self._get_region_from_code(c)
+                        if fnd_reg == '':
+                            Logger.warning(f"WARNING: Unknown region code {c} / {reg} / {self.title}")
+                        else:
+                            parsed_regs.append(fnd_reg)
+                else:
+                    fnd_reg = self._get_region_from_code(reg.upper())
+                    if fnd_reg == '':
+                        Logger.warning(f"WARNING: Unknown region code {reg} / {self.title}")
+                    else:
+                        parsed_regs.append(fnd_reg)
+
+                for x in parsed_regs:
+                    if x not in self.regions:
+                        self.regions.append(x)

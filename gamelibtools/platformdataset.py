@@ -46,12 +46,12 @@ class PlatformDataset:
         process_stat_list(self.genres, gameinf.genres)
 
 
-    def export(self, fpath: str, cols: list):
+    def export(self, fpath: str):
         """
         Export games data table to a CSV file
         :param fpath: File path
-        :param cols: Data columns
         """
+        cols = ["Title", "Developers", "Publishers", "Genres", "Regions", "Released", "Release Dates", "Flags"]
         with open(fpath, 'w', newline='', encoding='utf8') as csvfile:
             writer = csv.writer(csvfile, lineterminator='\r\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
             writer.writerow(cols)

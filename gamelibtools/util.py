@@ -92,6 +92,8 @@ def print_array(arr: list):
     """
     if arr is None:
         return None
+    if len(arr) == 0:
+        return ''
     return str(arr)
 
 

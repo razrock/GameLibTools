@@ -25,7 +25,7 @@ wiki_import_map = {
     'xbox360': {
         'url': ['https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(M-Z)'],
         'schema': ["Title", "Genres", "Developers", "Publishers", "Released NA", "Released EU", "Released JP", "Released AU", "Flags", "Flags"],
-        'flags': {'3D': '3D Support', 'K': 'Kinect', 'DL': 'Downloadable', 'XBLIG': 'Xbox Live Indie', 'XBLA': 'Xbox Live Arcade', 'XBG': 'Xbox One Compatible', 'XE': 'Xbox One Enchanced'}
+        'flags': {'3D': '3D Support', 'K': 'Kinect', 'DL': 'Downloadable', 'XBLIG': 'Xbox Live Indie', 'XBLA': 'Xbox Live Arcade', 'XBO': 'Xbox One Compatible', 'XE': 'Xbox One Enchanced'}
     },
     'ps1': {
         'url': ['https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(M-Z)'],
@@ -74,7 +74,6 @@ class GameImporter:
             platformdata = PlatformDataset()
             acttableid = config['tableid'] if 'tableid' in config else self.tableid
             actheaderrows = config['headerrows'] if 'headerrows' in config else self.header_rows
-            hasregs = config['regions'] if 'regions' in config else True
             Logger.sysmsg(f"\n** Importing game data for platform {platform.upper()}")
             Logger.sysmsg(f"====================================================================================================")
             if 'sections' in config and config['sections']:
@@ -92,14 +91,11 @@ class GameImporter:
                 for gameinf in platformdata.games:
                     gameinf.resolve_flags(config['flags'])
 
-            # TODO: Change region schema
-            # TODO: Fixed columns for export -> compact release dates
-
             Logger.sysmsg(f"Data extracted - {len(platformdata.games)} entries found")
             platformdata.report()
             if len(platformdata.games) > 0:
                 Logger.log(f"Exporting data...")
-                platformdata.export(self._get_file_path(platform), config['schema'])
+                platformdata.export(self._get_file_path(platform))
             Logger.log(" ")
 
     def import_from_wiki(self, url: str, tableid: str, schema: list, headrows: int, data):
