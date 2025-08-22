@@ -7,6 +7,7 @@
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
+import json
 import os
 import requests
 import string
@@ -16,39 +17,7 @@ from gamelibtools.platforminfo import *
 from bs4 import BeautifulSoup
 
 
-""" Wikipedia per platform data source mappings """
-wiki_import_map = {
-    'xbox': {
-        'url': 'https://en.wikipedia.org/wiki/List_of_Xbox_games',
-        'schema': ["Title", "Developers", "Publishers", "Released PAL", "Released JP", "Released NA"]
-    },
-    'xbox360': {
-        'url': ['https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_Xbox_360_games_(M-Z)'],
-        'schema': ["Title", "Genres", "Developers", "Publishers", "Released NA", "Released EU", "Released JP", "Released AU", "Flags", "Flags"],
-        'flags': {'3D': '3D Support', 'K': 'Kinect', 'DL': 'Downloadable', 'XBLIG': 'Xbox Live Indie', 'XBLA': 'Xbox Live Arcade', 'XBO': 'Xbox One Compatible', 'XE': 'Xbox One Enchanced'}
-    },
-    'ps1': {
-        'url': ['https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(A-L)', 'https://en.wikipedia.org/wiki/List_of_PlayStation_(console)_games_(M-Z)'],
-        'schema': ["Title", "Developers", "Publishers", "Released JP", "Released PAL", "Released NA"]
-    },
-    'ps2': {
-        'url': ['https://en.wikipedia.org/wiki/List_of_PlayStation_2_games_(A-K)', 'https://en.wikipedia.org/wiki/List_of_PlayStation_2_games_(L-Z)'],
-        'schema': ["Title", "Developers", "Publishers", "Released", "JP", "PAL", "NA"],
-        'headerrows': 1
-    },
-    'ps3': {
-        'url': [
-            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(A-C)',
-            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(D-I)',
-            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(J-P)',
-            'https://en.wikipedia.org/wiki/List_of_PlayStation_3_games_(Q-Z)'
-        ],
-        'schema': ["Title", "Developers", "Released JP", "Released PAL", "Released NA", "Flags"],
-        'flags': {'3D': 'Stereoscopic 3D', 'M': 'Playstation Move', 'SV': 'SimulView', 'F2P': 'Free-to-play', 'E': 'PlayStation Eye', 'D': 'Digital Only'}
-    }
-}
-
-class GameImporter:
+class WikiImporter:
     """ Game importer class """
 
     def __init__(self):
@@ -59,12 +28,13 @@ class GameImporter:
         self.header_rows = 2
         self.letters = list(string.ascii_uppercase)
         self.letters.append('Numerical')
+        self.sources_map = json.load(open('config/wikisources.json'))
 
     def run(self, selplatform: str=''):
         """ Import all data sources (defined platforms) """
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
-        for platform, config in wiki_import_map.items():
+        for platform, config in self.sources_map.items():
             if self.skip_existing and os.path.exists(self._get_file_path(platform)) and selplatform == '':
                 Logger.log(f"\nGame data for platform {platform} found, skipping platform")
                 continue
@@ -84,13 +54,24 @@ class GameImporter:
                 for xurl in config['url']:
                     self.import_from_wiki(xurl, acttableid, config['schema'], actheaderrows, platformdata)
             else:
-                self.import_from_wiki(config['url'], acttableid, config['schema'], actheaderrows, platformdata)
+                # Check if there are multiple tables on the same page
+                if 'tables' in config and config['tables']:
+                    actschema = config['schema'] if 'schema' in config else {}
+                    for table_inf in config['tables']:
+                        acttableid = table_inf['tableid'] if 'tableid' in table_inf else acttableid
+                        actheaderrows = table_inf['headerrows'] if 'headerrows' in table_inf else actheaderrows
+                        actschema = table_inf['schema'] if 'schema' in table_inf else actschema
+                        self.import_from_wiki(config['url'], acttableid, actschema, actheaderrows, platformdata)
+                else:
+                    self.import_from_wiki(config['url'], acttableid, config['schema'], actheaderrows, platformdata)
 
+            # Resolve flags
             if 'flags' in config and 'Flags' in config['schema']:
                 Logger.log("Resolving platform flags...")
                 for gameinf in platformdata.games:
                     gameinf.resolve_flags(config['flags'])
 
+            # Save data / Print summary
             Logger.sysmsg(f"Data extracted - {len(platformdata.games)} entries found")
             platformdata.report()
             if len(platformdata.games) > 0:
@@ -144,6 +125,8 @@ class GameImporter:
         :param tableid: Data table element ID
         """
         Logger.log(f"Fetching game data from {url}...")
+        if len(tableid) == 0:
+            return []
         response = requests.get(url)
         html_content = response.text
         if html_content is None:
@@ -151,7 +134,16 @@ class GameImporter:
 
         Logger.log(f"HTML page downloaded. Parsing HTML for #{tableid} table...")
         soup = BeautifulSoup(html_content, features="html.parser")
-        table = soup.find(id=tableid)
+        if tableid[0] == '_':
+            # No table ID -> Query n-th table in the document
+            ind = int(tableid[1:])
+            all_tables = soup.findAll('table')
+            if not all_tables or len(all_tables) == 0:
+                return []
+            table = all_tables[ind]
+        else:
+            # Query table by ID
+            table = soup.find(id=tableid)
         if table is None:
             return []
 

@@ -10,6 +10,7 @@
 import sys
 import argparse
 
+from gamelibtools.igdbclient import IgdbClient
 from gamelibtools.wikiimporter import *
 from gamelibtools.logger import *
 
@@ -17,17 +18,31 @@ def main():
     """ Application entry point """
     # parse command line arguments
     parser = argparse.ArgumentParser()
+    parser.add_argument('source', help='Data Source')
     parser.add_argument('command', help='Command')
+    parser.add_argument('-platform', help='Platform ID', type=int, default=0)
     args = parser.parse_args()
 
     # Command selector
     Logger.set_level(Logger.LVLMSG)
     try:
-        if args.command == "import":
-            datamgr = GameImporter()
-            datamgr.run()
+        if args.source == "wiki":
+            if args.command == "import":
+                datamgr = WikiImporter()
+                datamgr.run()
+            else:
+                print(f"Unknown command ({args.command}). Exiting...")
+        elif args.source == "igdb":
+            if args.command == "import":
+                igdbapi = IgdbClient()
+                igdbapi.load()
+                igdbapi.auth()
+                igdbapi.load_support_data()
+                igdbapi.import_platform_games(args.platform)
+            else:
+                print(f"Unknown command ({args.command}). Exiting...")
         else:
-            print(f"Unknown command ({args.command}). Exiting...")
+            print(f"Unknown data source ({args.source}). Exiting...")
     except Exception as conerr:
         print('Error occurred: ' + conerr.__str__())
         sys.exit(1)

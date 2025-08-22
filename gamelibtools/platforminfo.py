@@ -92,6 +92,13 @@ class PlatformInfo:
                     reg = self._get_region_from_code(schema[i].upper())
                     if reg not in self.regions:
                         self.regions.append(reg)
+            elif schema[i].lower() == "regions":
+                for x in data[i].splitlines():
+                    y = x.split(',')
+                    for reg in y:
+                        fnd_reg = self._get_region_from_code(reg.strip())
+                        if fnd_reg not in self.regions:
+                            self.regions.append(fnd_reg)
             elif schema[i].lower() == "flags":
                 self.flags = []
                 for x in data[i].splitlines():
