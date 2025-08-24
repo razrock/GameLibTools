@@ -8,7 +8,6 @@
     :license: See LICENSE.txt for full license information
 """
 from zipfile import ZipFile
-
 from gamelibtools.logger import Logger
 
 
@@ -48,7 +47,6 @@ def extract_html_content(uielem, splitarr: bool=True) -> str:
                 ret += tx
     return ret.strip()
 
-
 def process_stat_list(data: dict, clist: list):
     """
     Add tag/company/category to the stat count
@@ -69,7 +67,6 @@ def process_stat_list(data: dict, clist: list):
         else:
             data[name] = 1
 
-
 def print_stat(data: dict, maxcnt: int=10):
     """
     Print game count statistics
@@ -83,7 +80,6 @@ def print_stat(data: dict, maxcnt: int=10):
         Logger.log(f"   {i:2} - {k:30} : {v:3}")
         i += 1
 
-
 def print_array(arr: list):
     """
     Print array
@@ -95,7 +91,6 @@ def print_array(arr: list):
     if len(arr) == 0:
         return ''
     return str(arr)
-
 
 def get_zip_uncompressed_size(fpath: str) -> int:
     """
