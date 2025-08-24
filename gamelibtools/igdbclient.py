@@ -7,15 +7,10 @@
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
-import csv
-import json
 import os
 import time
-from io import BytesIO
 from datetime import datetime
-
-import requests
-from gamelibtools.logger import Logger
+from gamelibtools.util import *
 
 
 class IgdbClient:
@@ -55,18 +50,68 @@ class IgdbClient:
         self.schema_franchises = ['id', 'name', 'url', { 'name': 'count', 'type': 'int' }, {'name': 'games', 'type': 'list'}]
         self.schema_collections = ['id', 'name', 'url', { 'name': 'count', 'type': 'int' }, {'name': 'games', 'type': 'list'}]
         self.schema_engines = ['id', 'name', 'slug', 'description', 'url', 'logo', 'logo_url', {'name': 'companies', 'type': 'list'}, {'name': 'platforms', 'type': 'list'}]
-        self.schema_games = ['id', 'name', 'summary', 'storyline' 'aggregated_rating', 'aggregated_rating_count', 'rating', 'rating_count', 'total_rating', 'total_rating_count',
-                             'hypes', 'parent_game', 'similar_games', 'bundles', 'dlcs', 'expanded_games', 'expansions', 'forks', 'ports', 'remakes', 'remasters',
-                             'standalone_expansions', 'version_title', 'version_parent', 'first_release_date', 'game_status', 'game_type', 'game_modes', 'genres',
-                             'release_dates', 'alternative_names', 'developers', 'publishers', 'languages', 'player_perspectives', 'tags', 'keywords', 'themes', 'localizations',
-                             'age_ratings', 'multiplayer_modes', 'offlinecoopmax', 'offlinemax', 'onlinecoopmax', 'onlinemax', 'game_engines', 'collections', 'franchises',
-                             'cover', 'screenshots', 'artworks', 'videos', 'websites', 'external_sources']
-        # TODO: Fix games schema + Add features
-        # - Popularity
-        # - Time to beat
-        # - Platform versions
-        # - Game versions
-        # - Characters
+        self.schema_games = [
+            'id',
+            'name',
+            {'name': 'alternative_names', 'type': 'list'},
+            'slug',
+            'summary',
+            'storyline',
+            {'name': 'genres', 'type': 'list'},
+            'first_release_date',
+            {'name': 'release_dates', 'type': 'list'},
+            {'name': 'developers', 'type': 'list'},
+            {'name': 'publishers', 'type': 'list'},
+            'game_status',
+            'game_type',
+            {'name': 'aggregated_rating', 'type': 'float'},
+            {'name': 'aggregated_rating_count', 'type': 'int'},
+            {'name': 'rating', 'type': 'float'},
+            {'name': 'rating_count', 'type': 'int'},
+            {'name': 'total_rating', 'type': 'float'},
+            {'name': 'total_rating_count', 'type': 'int'},
+            {'name': 'game_modes', 'type': 'list'},
+            {'name': 'languages', 'type': 'list'},
+            {'name': 'localizations', 'type': 'list'},
+            {'name': 'tags', 'type': 'list'},
+            {'name': 'keywords', 'type': 'list'},
+            {'name': 'themes', 'type': 'list'},
+            {'name': 'player_perspectives', 'type': 'list'},
+            {'name': 'age_ratings', 'type': 'list'},
+            {'name': 'multiplayer_modes', 'type': 'list'},
+            {'name': 'offlinecoopmax', 'type': 'int'},
+            {'name': 'offlinemax', 'type': 'int'},
+            {'name': 'onlinecoopmax', 'type': 'int'},
+            {'name': 'onlinemax', 'type': 'int'},
+            {'name': 'game_engines', 'type': 'list'},
+            {'name': 'time_normal', 'type': 'int'},
+            {'name': 'time_minimal', 'type': 'int'},
+            {'name': 'time_full', 'type': 'int'},
+            {'name': 'time_count', 'type': 'int'},
+            {'name': 'hypes', 'type': 'int'},
+            {'name': 'parent_game', 'type': 'int'},
+            {'name': 'similar_games', 'type': 'list'},
+            {'name': 'bundles', 'type': 'list'},
+            {'name': 'dlcs', 'type': 'list'},
+            {'name': 'expanded_games', 'type': 'list'},
+            {'name': 'expansions', 'type': 'list'},
+            {'name': 'forks', 'type': 'list'},
+            {'name': 'ports', 'type': 'list'},
+            {'name': 'remakes', 'type': 'list'},
+            {'name': 'remasters', 'type': 'list'},
+            {'name': 'standalone_expansions', 'type': 'list'},
+            {'name': 'collections', 'type': 'list'},
+            {'name': 'franchises', 'type': 'list'},
+            'version_title',
+            {'name': 'version_parent', 'type': 'int'},
+            {'name': 'cover', 'type': 'list'},
+            {'name': 'screenshots', 'type': 'list'},
+            {'name': 'artworks', 'type': 'list'},
+            {'name': 'videos', 'type': 'list'},
+            {'name': 'websites', 'type': 'list'},
+            {'name': 'external_sources', 'type': 'list'},
+            'url'
+        ]
 
 
     def load(self):
@@ -105,11 +150,10 @@ class IgdbClient:
             os.makedirs(self.covers_dir)
         if not os.path.exists(self.artwork_dir):
             os.makedirs(self.artwork_dir)
-
         self.countries = json.load(open('config/countries.json'))
         self.load_common_data()
-        self.load_platforms()
         self.load_companies()
+        self.load_platforms()
         self.load_franchises()
         self.load_collections()
         self.load_game_engines()
@@ -133,118 +177,112 @@ class IgdbClient:
             # Import data
             Logger.log(f"Fetching platform types...")
             fields = ['id', 'name']
-            self.support_data['platform_types'] = self._fetch_map('/platform_types', 'fields *; limit 500;', fields)
+            self.support_data['platform_types'] = self._fetch_map('/platform_types', '', fields)
             for pid in self.support_data['platform_types']:
                 self.support_data['platform_types'][pid] = self.support_data['platform_types'][pid].replace("_", " ")
 
             Logger.log(f"Fetching platform families...")
             fields = ['id', 'name']
-            self.support_data['platform_families'] = self._fetch_map('/platform_families', 'fields *; limit 500;', fields)
+            self.support_data['platform_families'] = self._fetch_map('/platform_families', '', fields)
 
             Logger.log(f"Fetching game types...")
             fields = ['id', 'type']
-            self.support_data['game_types'] = self._fetch_map('/game_types', 'fields *; limit 500;', fields)
+            self.support_data['game_types'] = self._fetch_map('/game_types', '', fields)
 
             Logger.log(f"Fetching game statuses...")
             fields = ['id', 'status']
-            self.support_data['game_status'] = self._fetch_map('/game_statuses', 'fields *; limit 500;', fields)
+            self.support_data['game_status'] = self._fetch_map('/game_statuses', '', fields)
 
             Logger.log(f"Fetching game modes...")
             fields = ['id', 'name']
-            self.support_data['game_modes'] = self._fetch_map('/game_modes', 'fields *; limit 500;', fields)
+            self.support_data['game_modes'] = self._fetch_map('/game_modes', '', fields)
 
             Logger.log(f"Fetching regions...")
             fields = ['id', 'name', 'identifier', 'category']
-            self.support_data['regions'] = self._fetch_map('/regions', 'fields *; limit 500;', fields)
+            self.support_data['regions'] = self._fetch_map('/regions', '', fields)
 
             Logger.log(f"Fetching player perspectives...")
             fields = ['id', 'name']
-            self.support_data['player_perspectives'] = self._fetch_map('/player_perspectives', 'fields *; limit 500;', fields)
+            self.support_data['player_perspectives'] = self._fetch_map('/player_perspectives', '', fields)
 
             Logger.log(f"Fetching genres...")
             fields = ['id', 'name']
-            self.support_data['genres'] = self._fetch_map('/genres', 'fields *; limit 500;', fields)
+            self.support_data['genres'] = self._fetch_map('/genres', '', fields)
 
             Logger.log(f"Fetching themes...")
             fields = ['id', 'name']
-            self.support_data['themes'] = self._fetch_map('/themes', 'fields *; limit 500;', fields)
+            self.support_data['themes'] = self._fetch_map('/themes', '', fields)
 
             Logger.log(f"Fetching keywords...")
             fields = ['id', 'name']
-            self.support_data['keywords'] = {}
-            total_keywords = self._count('/keywords/count', '')
-            count = 0
-            while count < total_keywords:
-                resp = self._fetch_map('/keywords', f'fields *; offset {count}; limit 500;', fields)
-                self.support_data['keywords'].update(resp)
-                count += len(resp)
+            self.support_data['keywords'] = self._fetch_map('/keywords', '', fields)
 
             Logger.log(f"Fetching release date regions...")
             fields = ['id', 'region']
-            self.support_data['release_regions'] = self._fetch_map('/release_date_regions', 'fields *; limit 500;', fields)
+            self.support_data['release_regions'] = self._fetch_map('/release_date_regions', '', fields)
             for x in self.support_data['release_regions']:
                 self.support_data['release_regions'][x] = self.support_data['release_regions'][x].replace("_", " ").capitalize()
 
             Logger.log(f"Fetching release date statuses...")
             fields = ['id', 'name']
-            self.support_data['release_status'] = self._fetch_map('/release_date_statuses', 'fields *; limit 500;', fields)
+            self.support_data['release_status'] = self._fetch_map('/release_date_statuses', '', fields)
 
             Logger.log(f"Fetching date formats...")
             fields = ['id', 'format']
-            self.support_data['date_formats'] = self._fetch_map('/date_formats', 'fields *; limit 500;', fields)
+            self.support_data['date_formats'] = self._fetch_map('/date_formats', '', fields)
 
             Logger.log(f"Fetching company statuses...")
             fields = ['id', 'name']
-            self.support_data['company_status'] = self._fetch_map('/company_statuses', 'fields *; limit 500;', fields)
+            self.support_data['company_status'] = self._fetch_map('/company_statuses', '', fields)
             for x in self.support_data['company_status']:
                 self.support_data['company_status'][x] = self.support_data['company_status'][x].capitalize()
 
             Logger.log(f"Fetching language support types...")
             fields = ['id', 'name']
-            self.support_data['language_support_types'] = self._fetch_map('/language_support_types', 'fields *; limit 500;', fields)
+            self.support_data['language_support_types'] = self._fetch_map('/language_support_types', '', fields)
 
             Logger.log(f"Fetching languages...")
             fields = ['id', 'name', 'native_name', 'locale']
-            self.support_data['languages'] = self._fetch_map('/languages', 'fields *; limit 500;', fields)
+            self.support_data['languages'] = self._fetch_map('/languages', '', fields)
 
             Logger.log(f"Fetching collection relation types...")
             fields = ['id', 'name']
-            self.support_data['collection_relation_types'] = self._fetch_map('/collection_relation_types', 'fields *; limit 500;', fields)
+            self.support_data['collection_relation_types'] = self._fetch_map('/collection_relation_types', '', fields)
 
             Logger.log(f"Fetching collection membership types...")
             fields = ['id', 'name']
-            self.support_data['collection_membership_types'] = self._fetch_map('/collection_membership_types', 'fields *; limit 500;', fields)
+            self.support_data['collection_membership_types'] = self._fetch_map('/collection_membership_types', '', fields)
 
             Logger.log(f"Fetching artwork types...")
             fields = ['id', 'name']
-            self.support_data['artwork_types'] = self._fetch_map('/artwork_types', 'fields *; limit 500;', fields)
+            self.support_data['artwork_types'] = self._fetch_map('/artwork_types', '', fields)
 
             Logger.log(f"Fetching game release formats...")
             fields = ['id', 'format']
-            self.support_data['game_release_formats'] = self._fetch_map('/game_release_formats', 'fields *; limit 500;', fields)
+            self.support_data['game_release_formats'] = self._fetch_map('/game_release_formats', '', fields)
 
             Logger.log(f"Fetching external game sources...")
             fields = ['id', 'name']
-            self.support_data['external_game_sources'] = self._fetch_map('/external_game_sources', 'fields *; limit 500;', fields)
+            self.support_data['external_game_sources'] = self._fetch_map('/external_game_sources', '', fields)
 
             Logger.log(f"Fetching age rating organizations...")
             fields = ['id', 'name']
-            self.support_data['age_rating_organizations'] = self._fetch_map('/age_rating_organizations', 'fields *; limit 500;', fields)
+            self.support_data['age_rating_organizations'] = self._fetch_map('/age_rating_organizations', '', fields)
 
             Logger.log(f"Fetching age rating categories...")
             fields = ['id', 'rating', 'organization']
-            self.support_data['age_rating_categories'] = self._fetch_map('/age_rating_categories', 'fields *; limit 500;', fields)
+            self.support_data['age_rating_categories'] = self._fetch_map('/age_rating_categories', '', fields)
             for x in self.support_data['age_rating_categories']:
                 oid = self.support_data['age_rating_categories'][x]['organization']
                 self.support_data['age_rating_categories'][x]['organization'] = self.support_data['age_rating_organizations'][oid]
 
             Logger.log(f"Fetching age rating content description types...")
             fields = ['id', 'name']
-            self.support_data['age_rating_description_types'] = self._fetch_map('/age_rating_content_description_types', 'fields *; limit 500;', fields)
+            self.support_data['age_rating_description_types'] = self._fetch_map('/age_rating_content_description_types', '', fields)
 
             Logger.log(f"Fetching age rating content descriptions...")
             fields = ['id', 'description', 'description_type', 'organization']
-            self.support_data['age_rating_descriptions'] = self._fetch_map('/age_rating_content_descriptions_v2', 'fields *; limit 500;', fields)
+            self.support_data['age_rating_descriptions'] = self._fetch_map('/age_rating_content_descriptions_v2', '', fields)
             for x in self.support_data['age_rating_categories']:
                 oid = self.support_data['age_rating_descriptions'][x]['organization']
                 tid = self.support_data['age_rating_descriptions'][x]['description_type']
@@ -264,31 +302,60 @@ class IgdbClient:
         fpath = self.data_dir + '/' + self.platforms_file
         if os.path.exists(fpath):
             # Lood local platforms data
-            self.platforms = self.load_data_table(fpath, self.schema_platforms)
+            self.platforms = load_data_table(fpath, self.schema_platforms)
 
             # Check platform logos
             for platform in self.platforms:
                 if 'logo' in platform and platform['logo']:
                     if not os.path.exists(platform['logo']):
                         Logger.warning(f"Platform {platform['name']} logo missing...")
-                        self._download(platform['logo'], platform['logo_url'])
+                        download_file(platform['logo'], platform['logo_url'])
             Logger.log(f"IGDB platform data loaded from {fpath}")
         else:
             # Import data
-            Logger.log(f"Fetching platform versions...")
-            fields = ['id', 'name']
-            platform_versions = self._fetch_map('/platform_versions', 'fields *; limit 500;', fields)
-
             Logger.log(f"Fetching platform logos...")
             fields = ['id', 'name', 'image_id', 'url', 'width', 'height', 'animated', 'alpha_channel']
-            platform_logos = self._fetch_map('/platform_logos', 'fields *; limit 500;', fields)
+            platform_logos = self._fetch_map('/platform_logos', '', fields)
+
+            Logger.log(f"Fetching platform versions release dates...")
+            fields = ['id', 'human', 'release_region']
+            platform_version_release_dates = self._fetch_map('/platform_version_release_dates', '', fields)
+
+            Logger.log(f"Fetching platform versions...")
+            platform_versions = self._fetch_map('/platform_versions')
+            for x in platform_versions:
+                if 'companies' in platform_versions[x]:
+                    tx = []
+                    for y in platform_versions[x]['companies']:
+                        cinf = next((item for item in self.companies if item["id"] == y), None)
+                        if cinf:
+                            tx.append({ 'id': y, 'name': cinf['name'] })
+                    platform_versions[x]['companies'] = tx
+                if 'main_manufacturer' in platform_versions[x]:
+                    platform_versions[x].pop('main_manufacturer')
+                if 'platform_logo' in platform_versions[x]:
+                    imginf = platform_logos[platform_versions[x]['platform_logo']]
+                    if imginf:
+                        imgpath = self.img_dir + '/platform_' + str(platform_versions[x]['slug']) + '.jpg'
+                        platform_versions[x]['platform_logo_url'] = 'https:' + imginf['url'].replace("/t_thumb/", "/t_original/")
+                        if os.path.exists(imgpath):
+                            platform_versions[x]['platform_logo'] = imgpath
+                        else:
+                            platform_versions[x]['platform_logo'] = download_file(imgpath, platform_versions[x]['platform_logo_url'])
+                if 'platform_version_release_dates' in platform_versions[x]:
+                    platform_versions[x]['release_dates'] = []
+                    for y in platform_versions[x]['platform_version_release_dates']:
+                        if y in platform_version_release_dates:
+                            rdinf = { 'date': platform_version_release_dates[y]['human'], 'region': self.support_data['release_regions'][platform_version_release_dates[y]['release_region']] }
+                            platform_versions[x]['release_dates'].append(rdinf)
+                    platform_versions[x].pop('platform_version_release_dates')
 
             Logger.log(f"Fetching platforms...")
             self.platforms = []
             fields = ['id', 'name', 'abbreviation', 'alternative_name', 'generation', 'slug']
             resp = self._req('/platforms', 'fields *; limit 500; sort name asc;')
             for x in resp:
-                y = self._extract_fields(x, fields)
+                y = extract_fields(x, fields)
                 if 'platform_type' in x:
                     y['platform_type'] = self.support_data['platform_types'][x['platform_type']]
                 if 'platform_logo' in x:
@@ -298,10 +365,10 @@ class IgdbClient:
                     if os.path.exists(imgpath):
                         y['logo'] = imgpath
                     else:
-                        y['logo'] = self._download(imgpath, y['logo_url'])
+                        y['logo'] = download_file(imgpath, y['logo_url'])
                 if 'platform_family' in x:
                     y['platform_family'] = self.support_data['platform_families'][x['platform_family']]
-                if 'versions' in x and len(x['versions']) > 1:
+                if 'versions' in x and len(x['versions']) > 0:
                     y['versions'] = []
                     for ver in x['versions']:
                         y['versions'].append(platform_versions[ver])
@@ -309,7 +376,7 @@ class IgdbClient:
 
             # Write data to a CSV file
             Logger.log(f"Writing data to a file...")
-            self.save_data_table(self.platforms, fpath, self.schema_platforms)
+            save_data_table(self.platforms, fpath, self.schema_platforms)
             Logger.log(f"IGDB platform data loaded")
 
     def load_companies(self):
@@ -318,14 +385,14 @@ class IgdbClient:
         fpath = self.data_dir + '/' + self.companies_file
         if os.path.exists(fpath):
             # Lood local platforms data
-            self.companies = self.load_data_table(fpath, self.schema_companies)
+            self.companies = load_data_table(fpath, self.schema_companies)
 
             # Check logos
             for company in self.companies:
                 if 'logo' in company and company['logo']:
                     if not os.path.exists(company['logo']):
                         Logger.warning(f"Company {company['name']} logo missing...")
-                        self._download(company['logo'], company['logo_url'])
+                        download_file(company['logo'], company['logo_url'])
                 company['developed'] = int(company['developed'])
                 company['published'] = int(company['published'])
             Logger.log(f"IGDB company data loaded from {fpath}")
@@ -335,7 +402,7 @@ class IgdbClient:
             company_logos = []
             company_logos_map = {}
             if os.path.exists(cachepath):
-                company_logos = self.load_data_table(cachepath, self.schema_images)
+                company_logos = load_data_table(cachepath, self.schema_images)
                 for i in range(len(company_logos)):
                     company_logos_map[int(company_logos[i]['id'])] = i
             else:
@@ -345,11 +412,11 @@ class IgdbClient:
                 while count < total_company_logos:
                     resp = self._req('/company_logos', f'fields *; offset {count}; limit 500;')
                     for x in resp:
-                        y = self._extract_fields(x, self.schema_images)
+                        y = extract_fields(x, self.schema_images)
                         company_logos.append(y)
                         company_logos_map[y['id']] = len(company_logos) - 1
                     count += len(resp)
-                self.save_data_table(company_logos, cachepath, self.schema_images)
+                save_data_table(company_logos, cachepath, self.schema_images)
 
             Logger.log(f"Fetching companies...")
             self.companies = []
@@ -360,7 +427,7 @@ class IgdbClient:
             while count < total_companies:
                 resp = self._req('/companies', f'fields *; offset {count}; limit 500; sort name asc;')
                 for x in resp:
-                    y = self._extract_fields(x, fields)
+                    y = extract_fields(x, fields)
                     if 'status' in x:
                         if x['status'] in self.support_data['company_status']:
                             y['status'] = self.support_data['company_status'][x['status']]
@@ -374,7 +441,7 @@ class IgdbClient:
                             if os.path.exists(imgpath):
                                 y['logo'] = imgpath
                             else:
-                                y['logo'] = self._download(imgpath, y['logo_url'])
+                                y['logo'] = download_file(imgpath, y['logo_url'])
                         else:
                             Logger.warning(f"Company '{x['name']}' logo reference invalid: {x['logo']}")
                     if 'start_date' in x and x['start_date'] > 0:
@@ -427,7 +494,7 @@ class IgdbClient:
 
                         # Write data to a CSV file
             Logger.log(f"Writing data to a file...")
-            self.save_data_table(self.companies, fpath, self.schema_companies)
+            save_data_table(self.companies, fpath, self.schema_companies)
             Logger.log(f"IGDB company data loaded")
 
             # Clear cache
@@ -439,7 +506,7 @@ class IgdbClient:
         fpath = self.data_dir + '/' + self.franchises_file
         if os.path.exists(fpath):
             # Lood local data
-            self.franchises = self.load_data_table(fpath, self.schema_franchises)
+            self.franchises = load_data_table(fpath, self.schema_franchises)
             Logger.log(f"IGDB franchises data loaded from {fpath}")
         else:
             # Import data
@@ -452,7 +519,7 @@ class IgdbClient:
             while count < total:
                 resp = self._req('/franchises', f'fields *; offset {count}; limit 500; sort name asc;')
                 for x in resp:
-                    y = self._extract_fields(x, fields)
+                    y = extract_fields(x, fields)
                     y['count'] = len(x['games']) if 'games' in x else 0
                     self.franchises.append(y)
                 count += len(resp)
@@ -460,7 +527,7 @@ class IgdbClient:
 
             # Write data to a CSV file
             Logger.log(f"Writing data to a file...")
-            self.save_data_table(self.franchises, fpath, self.schema_franchises)
+            save_data_table(self.franchises, fpath, self.schema_franchises)
             Logger.log(f"IGDB franchises data loaded")
 
     def load_collections(self):
@@ -469,7 +536,7 @@ class IgdbClient:
         fpath = self.data_dir + '/' + self.collections_file
         if os.path.exists(fpath):
             # Lood local data
-            self.collections = self.load_data_table(fpath, self.schema_collections)
+            self.collections = load_data_table(fpath, self.schema_collections)
             Logger.log(f"IGDB collections data loaded from {fpath}")
         else:
             # Import data
@@ -482,7 +549,7 @@ class IgdbClient:
             while count < total:
                 resp = self._req('/collections', f'fields *; offset {count}; limit 500; sort name asc;')
                 for x in resp:
-                    y = self._extract_fields(x, fields)
+                    y = extract_fields(x, fields)
                     y['count'] = len(x['games']) if 'games' in x else 0
                     self.collections.append(y)
                 count += len(resp)
@@ -490,7 +557,7 @@ class IgdbClient:
 
             # Write data to a CSV file
             Logger.log(f"Writing data to a file...")
-            self.save_data_table(self.collections, fpath, self.schema_collections)
+            save_data_table(self.collections, fpath, self.schema_collections)
             Logger.log(f"IGDB collections data loaded")
 
     def load_game_engines(self):
@@ -499,7 +566,7 @@ class IgdbClient:
         fpath = self.data_dir + '/' + self.engines_file
         if os.path.exists(fpath):
             # Lood local data
-            self.engines = self.load_data_table(fpath, self.schema_engines)
+            self.engines = load_data_table(fpath, self.schema_engines)
             Logger.log(f"IGDB game engine data loaded from {fpath}")
         else:
             # Import data
@@ -512,7 +579,7 @@ class IgdbClient:
             while count < total:
                 resp = self._req('/game_engine_logos', f'fields *; offset {count}; limit 500; sort id asc;')
                 for x in resp:
-                    y = self._extract_fields(x, fields)
+                    y = extract_fields(x, fields)
                     y['url'] = 'https:' + y['url'].replace("/t_thumb/", "/t_original/")
                     engine_logos[y['id']] = y
                 count += len(resp)
@@ -526,7 +593,7 @@ class IgdbClient:
             while count < total:
                 resp = self._req('/game_engines', f'fields *; offset {count}; limit 500; sort name asc;')
                 for x in resp:
-                    y = self._extract_fields(x, fields)
+                    y = extract_fields(x, fields)
                     if 'platforms' in x:
                         y['platforms'] = []
                         for z in x['platforms']:
@@ -540,7 +607,7 @@ class IgdbClient:
                         if os.path.exists(imgpath):
                             y['logo'] = imgpath
                         else:
-                            y['logo'] = self._download(imgpath, imginf['url'])
+                            y['logo'] = download_file(imgpath, imginf['url'])
                         y['logo_url'] = imginf['url']
                     if 'companies' in x:
                         y['companies'] = []
@@ -555,7 +622,7 @@ class IgdbClient:
 
             # Write data to a CSV file
             Logger.log(f"Writing data to a file...")
-            self.save_data_table(self.engines, fpath, self.schema_engines)
+            save_data_table(self.engines, fpath, self.schema_engines)
             Logger.log(f"IGDB game engine data loaded")
 
     def import_games(self):
@@ -585,7 +652,54 @@ class IgdbClient:
             # Saving data
             if len(game_data) > 0:
                 Logger.log(f"Saving data for platform '{platform_name}'...")
-                self.save_data_table(game_data, data_path, self.schema_games)
+                save_data_table(game_data, data_path, self.schema_games)
+
+    def import_platform_games(self, pid: int):
+        """ Import and store platform games """
+        pinf = next((item for item in self.platforms if item["id"] == pid), None)
+        if not pinf:
+            return
+        games = self.list_platform_games(pid)
+        if len(games) > 0:
+            Logger.log(f"Saving data...")
+            fpath = f"{self.data_dir}/gamedata_igdb_{pinf['slug']}.csv"
+            save_data_table(games, fpath, self.schema_games)
+
+    def import_game_screenshots(self, gid: int) -> list:
+        """ Load game screenshots """
+        ret = []
+        xdata = self._req('/screenshots', f'fields *; limit 500; where game = {gid};')
+        cnt = 1
+        for ximg in xdata:
+            ssurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
+            sspath = f"{self.screenshot_dir}/screenshot_{gid}_{cnt}.jpg"
+            if not os.path.exists(sspath):
+                sspath = download_file(sspath, ssurl)
+            if sspath:
+                imginf = { 'path': sspath, 'url': ssurl }
+                ret.append(imginf)
+            cnt += 1
+        return ret
+
+    def import_game_artwork(self, gid: int) -> list:
+        """ Load game artwork """
+        ret = []
+        if 'artwork_types' not in self.support_data or len(self.support_data['artwork_types']) == 0:
+            Logger.warning("Unable to load game artwork. Support data not loaded")
+            return ret
+        xdata = self._req('/artworks', f'fields *; limit 500; where game = {gid};')
+        cnt = 1
+        for ximg in xdata:
+            atype = self.support_data['artwork_types'][ximg['artwork_type']] if 'artwork_type' in ximg and ximg['artwork_type'] in self.support_data['artwork_types'] else None
+            awurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
+            awpath = f"{self.artwork_dir}/artwork_{gid}_{cnt}.jpg"
+            if not os.path.exists(awpath):
+                awpath = download_file(awpath, awurl)
+            if awpath:
+                imginf = { 'path': awpath, 'url': awurl, 'type': atype }
+                ret.append(imginf)
+            cnt += 1
+        return ret
 
     def list_games(self) -> list:
         """ List all games """
@@ -599,25 +713,6 @@ class IgdbClient:
                 game_inf = self._parse_game(resp[x])
                 ret.append(game_inf)
         return ret
-
-    def count_games(self) -> int:
-        """ Count all games """
-        resp = self._req('/games/count', f'')
-        if resp and 'count' in resp:
-            Logger.dbgmsg(f'Total game count: {resp['count']}')
-            return resp['count']
-        return 0
-
-    def import_platform_games(self, pid: int):
-        """ Import and store platform games """
-        pinf = next((item for item in self.platforms if item["id"] == pid), None)
-        if not pinf:
-            return
-        games = self.list_platform_games(pid)
-        if len(games) > 0:
-            Logger.log(f"Saving data...")
-            fpath = f"{self.data_dir}/gamedata_igdb_{pinf['slug']}.csv"
-            self.save_data_table(games, fpath, self.schema_games)
 
     def list_platform_games(self, pid: int) -> list:
         """ List platform games """
@@ -638,6 +733,14 @@ class IgdbClient:
             count += len(resp)
         return ret
 
+    def count_games(self) -> int:
+        """ Count all games """
+        resp = self._req('/games/count', f'')
+        if resp and 'count' in resp:
+            Logger.dbgmsg(f'Total game count: {resp['count']}')
+            return resp['count']
+        return 0
+
     def count_platform_games(self, pid: int) -> int:
         """ Count platform games """
         resp = self._req('/games/count', f'where platforms = {pid};')
@@ -645,86 +748,6 @@ class IgdbClient:
             Logger.dbgmsg(f'Platform game count: {resp['count']}')
             return resp['count']
         return 0
-
-    def import_game_screenshots(self, gid: int) -> list:
-        """ Load game screenshots """
-        ret = []
-        xdata = self._req('/screenshots', f'fields *; limit 500; where game = {gid};')
-        cnt = 1
-        for ximg in xdata:
-            ssurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
-            sspath = f"{self.screenshot_dir}/screenshot_{gid}_{cnt}.jpg"
-            if not os.path.exists(sspath):
-                sspath = self._download(sspath, ssurl)
-            if sspath:
-                imginf = { 'path': sspath, 'url': ssurl }
-                ret.append(imginf)
-            cnt += 1
-        return ret
-
-    def import_game_artwork(self, gid: int) -> list:
-        """ Load game artwork """
-        ret = []
-        if 'artwork_types' not in self.support_data or len(self.support_data['artwork_types']) == 0:
-            Logger.warning("Unable to load game artwork. Support data not loaded")
-            return ret
-        xdata = self._req('/artworks', f'fields *; limit 500; where game = {gid};')
-        cnt = 1
-        for ximg in xdata:
-            atype = self.support_data['artwork_types'][ximg['artwork_type']] if 'artwork_type' in ximg and ximg['artwork_type'] in self.support_data['artwork_types'] else None
-            awurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
-            awpath = f"{self.artwork_dir}/artwork_{gid}_{cnt}.jpg"
-            if not os.path.exists(awpath):
-                awpath = self._download(awpath, awurl)
-            if awpath:
-                imginf = { 'path': awpath, 'url': awurl, 'type': atype }
-                ret.append(imginf)
-            cnt += 1
-        return ret
-
-    def save_data_table(self, rows: list, fpath: str, schema: list):
-        """
-        Export games data table to a CSV file
-        :param rows: Data table
-        :param fpath: File path
-        :param schema: Data table schema
-        """
-        with open(fpath, 'w', newline='', encoding='utf8') as csvfile:
-            cols = self._get_schema_columns(schema)
-            writer = csv.writer(csvfile, lineterminator='\r\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
-            writer.writerow(cols)
-
-            for row in rows:
-                rdata = self._list_fields(row, schema)
-                writer.writerow(rdata)
-        Logger.log(f"Data table stored to {fpath}")
-
-    def load_data_table(self, fpath: str, schema: list) -> list:
-        """ Load data table """
-        ret = []
-        checkheader = False
-        rownum = 0
-        cols = self._get_schema_columns(schema)
-        with open(fpath, 'r', newline='\r\n', encoding='utf8') as csvfile:
-            reader = csv.reader(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
-            try:
-                for row in reader:
-                    if not checkheader:
-                        if len(row) != len(schema):
-                            Logger.error(f"Loading table data from {fpath} failed. Column schema missmatch")
-                            return []
-                        for i in range(len(row)):
-                            if row[i] != cols[i]:
-                                Logger.error(f"Loading table data from {fpath} failed. Column schema missmatch (column {i})")
-                                return []
-                        checkheader = True
-                        continue
-                    y = self._parse_fields(row, schema)
-                    ret.append(y)
-                    rownum += 1
-            except Exception as e:
-                Logger.error(f"Parsing data table {fpath} failed, row {rownum}. {e}")
-        return ret
 
     def _count(self, url: str, query: str = '') -> int:
         """ Count data records """
@@ -748,114 +771,57 @@ class IgdbClient:
         ret = []
         resp = self._req(url, query)
         for x in resp:
-            z = self._extract_fields(x, params)
+            z = extract_fields(x, params)
             ret.append(z)
         return ret
 
-    def _fetch_map(self, url: str, query: str, params: list) -> dict:
+    def _fetch_map(self, url: str, query: str = '', params: list = None) -> dict:
         """ Fetch data from the IGDB and extract data fields"""
+        total = self._count(url, query)
+        Logger.log(f"{total} entries found. Importing data...")
+        count = 0
         ret = {}
-        if len(params) < 2:
-            return ret
-        resp = self._req(url, query)
-        for x in resp:
-            if len(params) == 2:
-                if params[0] in x and params[1] in x:
-                    ret[x[params[0]]] = x[params[1]]
-            else:
-                z = self._extract_fields(x, params)
-                ret[x[params[0]]] = z
+        while count < total:
+            resp = self._req(url, f'fields *; offset {count}; limit 500; sort id asc; {query};')
+            for x in resp:
+                if not params or len(params) == 0:
+                    ret[x['id']] = x
+                elif len(params) == 2:
+                    if params[0] in x and params[1] in x:
+                        ret[x[params[0]]] = x[params[1]]
+                else:
+                    z = extract_fields(x, params)
+                    ret[x[params[0]]] = z
+            count += len(resp)
+            if total > 1000:
+                Logger.dbgmsg(f"{count} / {total} entries loaded...")
         return ret
 
-    def _get_image(self, fname: str, imghash: str, imgsize: str, query: str) -> str|None:
-        """ Download image from the IGDB """
-        # Check last request timestamp in order to adhere to the rate limits
-        self._check_limits()
-
-        # Send a request
-        url = '/t_' + imgsize + '/' + imghash + '.jpg'
-        response = requests.post(self.hostname_img + url, query, headers={ 'Client-ID': self.clientid, 'Authorization': 'Bearer ' + self.accesstoken })
-        self.lastreqtime = time.time_ns()
-        if response is None:
-            return None
-
-        imgbytes = BytesIO(response.content)
-        fpath = self.img_dir + '/' + fname
-        if not os.path.exists(self.img_dir):
-            os.makedirs(self.img_dir)
-        with open(fpath, 'wb') as f:
-            f.write(imgbytes.getbuffer())
-        return fpath
-
-    def _download(self, fpath: str, url: str) -> str|None:
-        """ Download image from the IGDB """
-        Logger.log(f"Downloading image {fpath} from {url}...")
-        try:
-            response = requests.get(url)
-            if response is None:
-                return None
-
-            imgbytes = BytesIO(response.content)
-            with open(fpath, 'wb') as f:
-                f.write(imgbytes.getbuffer())
-            return fpath
-        except Exception as e:
-            Logger.error(f"Downloading image {fpath} from {url} failed. {e}")
-            return None
+    def _fetch_table(self, url: str, query: str = '', cols: list = None, fp = None) -> list:
+        """ Fetch data table """
+        total = self._count(url, query)
+        Logger.log(f"{total} entries found. Importing data...")
+        count = 0
+        ret = []
+        while count < total:
+            resp = self._req(url, f'fields *; offset {count}; limit 500; sort id asc; {query};')
+            for x in resp:
+                if fp:
+                    fp(x, ret)
+                elif cols:
+                    ret.append(extract_fields(x, cols))
+                else:
+                    ret.append(x)
+            count += len(resp)
+            if total > 1000:
+                Logger.dbgmsg(f"{count} / {total} entries loaded...")
+        return ret
 
     def _check_limits(self):
         """ Check request limits """
         if self.lastreqtime > 0 and time.time_ns() - self.lastreqtime < self.reqlimitms * 1000000:
             dursec = (self.reqlimitms * 1000000 - (time.time_ns() - self.lastreqtime)) / 1000000000.0
             time.sleep(dursec)
-
-    def _extract_fields(self, src: dict, params: list) -> dict:
-        """ Extract fields from a object (dict) """
-        z = {}
-        for y in params:
-            if y in src:
-                z[y] = src[y]
-        return z
-
-    def _list_fields(self, src: dict, schema: list) -> list:
-        """ List data fields in a data row """
-        z = []
-        for y in schema:
-            name = y if type(y) is str else y['name']
-            dtyp = ('int' if name == 'id' else 'str') if type(y) is str else y['type']
-            if name in src and src[name]:
-                if dtyp == 'list' or dtyp == 'dict':
-                    z.append(json.dumps(src[name]))
-                elif dtyp == 'int':
-                    z.append(int(src[name]))
-                elif dtyp == 'float':
-                    z.append(float(src[name]))
-                else:
-                    z.append(src[name])
-            else:
-                z.append(None)
-        return z
-
-    def _parse_fields(self, src: list, schema: list) -> dict:
-        """ Parse data row """
-        ret = {}
-        for i in range(len(schema)):
-            if i >= len(src):
-                break
-            try:
-                name = schema[i] if type(schema[i]) is str else schema[i]['name']
-                dtyp = ('int' if name == 'id' else 'str') if type(schema[i]) is str else schema[i]['type']
-                if dtyp == 'list' or dtyp == 'dict':
-                    ret[name] = json.loads(src[i]) if src[i] != "" else None
-                elif dtyp == 'int':
-                    ret[name] = int(src[i]) if src[i] != "" else None
-                elif dtyp == 'float':
-                    ret[name] = float(src[i]) if src[i] != "" else None
-                else:
-                    ret[name] = src[i]
-            except Exception as e:
-                raise Exception(f"Parsing data column {i}: {schema[i]} failed - {src[i]}")
-        return ret
 
     def _extract_date(self, dt, dformat: str) -> str:
         """ Extract and serialize timestamp """
@@ -873,24 +839,36 @@ class IgdbClient:
             return dt.strftime("%Y") + "-11"
         return dt.strftime("%Y-%m-%d")
 
-    def _get_schema_columns(self, schema: list) -> list:
-        """ Parse schema columns """
+    def _ref_field(self, src: list, data: list|dict, cols: list = None) -> list:
+        """ Resolve field references """
         ret = []
-        for c in schema:
-            if type(c) is str:
-                ret.append(c)
-            elif type(c) is dict and 'name' in c:
-                ret.append(c['name'])
-            else:
-                raise Exception(f'Invalid data column definition: {c}')
+        remap = cols and len(cols) > 0
+        if type(data) is list:
+            # Resolve references from a data table
+            for x in src:
+                xinf = next((item for item in data if item["id"] == x), None)
+                if not xinf:
+                    continue
+                if remap and type(data[x]) is dict:
+                    ret.append(extract_fields(xinf, cols))
+                else:
+                    ret.append(xinf)
+        else:
+            # Resolve references from a data map
+            for x in src:
+                if x in data:
+                    if remap and type(data[x]) is dict:
+                        ret.append(extract_fields(data[x], cols))
+                    else:
+                        ret.append(data[x])
         return ret
 
     def _parse_game(self, data: dict, loadplatforms: bool = False, loadscreenshots: bool = True, loadartwork: bool = True) -> dict:
         """ Parse game data """
         params = ['id', 'name', 'summary', 'storyline' 'aggregated_rating', 'aggregated_rating_count', 'rating', 'rating_count', 'total_rating', 'total_rating_count',
                   'hypes', 'parent_game', 'similar_games', 'bundles', 'dlcs', 'expanded_games', 'expansions', 'forks', 'ports', 'remakes', 'remasters',
-                  'standalone_expansions', 'version_title', 'version_parent']
-        ret = self._extract_fields(data, params)
+                  'standalone_expansions', 'version_title', 'version_parent', 'url', 'slug']
+        ret = extract_fields(data, params)
         if 'first_release_date' in data and data['first_release_date'] > 0:
             ret['first_release_date'] = datetime.fromtimestamp(data['first_release_date']).strftime("%Y-%m-%d")
         if 'game_status' in data and data['game_status'] in self.support_data['game_status']:
@@ -898,15 +876,9 @@ class IgdbClient:
         if 'game_type' in data and data['game_type'] in self.support_data['game_types']:
             ret['game_type'] = self.support_data['game_types'][data['game_type']]
         if 'game_modes' in data:
-            ret['game_modes'] = []
-            for x in data['game_modes']:
-                if x in self.support_data['game_modes']:
-                    ret['game_modes'].append(self.support_data['game_modes'][x])
+            ret['game_modes'] = self._ref_field(data['game_modes'], self.support_data['game_modes'])
         if 'genres' in data:
-            ret['genres'] = []
-            for x in data['genres']:
-                if x in self.support_data['genres']:
-                    ret['genres'].append(self.support_data['genres'][x])
+            ret['genres'] = self._ref_field(data['genres'], self.support_data['genres'])
         if 'release_dates' in data:
             ret['release_dates'] = []
             for xid in data['release_dates']:
@@ -951,15 +923,9 @@ class IgdbClient:
                 ltype = self.support_data['language_support_types'][x['language_support_type']] if x['language_support_type'] in self.support_data['language_support_types'] else None
                 ret['languages'].append({ 'lang': lang, 'type': ltype })
         if 'player_perspectives' in data:
-            ret['player_perspectives'] = []
-            for x in data['player_perspectives']:
-                if x in self.support_data['player_perspectives']:
-                    ret['player_perspectives'].append(self.support_data['player_perspectives'][x])
+            ret['player_perspectives'] = self._ref_field(data['player_perspectives'], self.support_data['player_perspectives'])
         if 'keywords' in data:
-            ret['keywords'] = []
-            for x in data['keywords']:
-                if x in self.support_data['keywords']:
-                    ret['keywords'].append(self.support_data['keywords'][x])
+            ret['keywords'] = self._ref_field(data['keywords'], self.support_data['keywords'])
         if 'tags' in data:
             ret['tags'] = []
             for x in data['tags']:
@@ -985,10 +951,7 @@ class IgdbClient:
                 if tag_source and tag_id in tag_source:
                     ret['tags'].append(tag_source[tag_id])
         if 'themes' in data:
-            ret['themes'] = []
-            for x in data['themes']:
-                if x in self.support_data['themes']:
-                    ret['themes'].append(self.support_data['themes'][x])
+            ret['themes'] = self._ref_field(data['themes'], self.support_data['themes'])
         if 'game_localizations' in data:
             ret['localizations'] = []
             xdata = self._req('/game_localizations', f'fields *; limit 500; where game = {ret['id']};')
@@ -1056,7 +1019,7 @@ class IgdbClient:
             covurl = "https:" + xdata['url'].replace("/t_thumb/", "/t_original/")
             covpath = f"{self.covers_dir}/cover_{data['slug']}_{ret['id']}.jpg"
             if not os.path.exists(covpath):
-                covpath = self._download(covpath, covurl)
+                covpath = download_file(covpath, covurl)
             if covpath:
                 ret['cover'] = { 'path': covpath, 'url': covurl }
         if loadscreenshots and 'screenshots' in data:
@@ -1081,7 +1044,7 @@ class IgdbClient:
             ret['external_sources'] = []
             xdata = self._req('/external_games', f'fields *; limit 500; where game = {ret['id']};')
             for x in xdata:
-                exinf = self._extract_fields(x, ['name', 'url', 'year'])
+                exinf = extract_fields(x, ['name', 'url', 'year'])
                 if 'countries' in x:
                     exinf['countries'] = []
                     for cid in x['countries']:
@@ -1100,4 +1063,17 @@ class IgdbClient:
                     else:
                         Logger.warning(f"Invalid platform reference {x['platform']} for external game source")
                 ret['external_sources'].append(exinf)
+
+        # Check time to beat stats
+        xdata = self._req('/game_time_to_beats', f'fields *; limit 500; where game_id = {ret['id']};')
+        if xdata and len(xdata) > 0:
+            xdata = xdata[0]
+            if 'count' in xdata and xdata['count'] > 0:
+                ret['time_count'] = xdata['count']
+            if 'normally' in xdata and xdata['normally'] > 0:
+                ret['time_normal'] = xdata['normally']
+            if 'hastily' in xdata and xdata['hastily'] > 0:
+                ret['time_minimal'] = xdata['hastily']
+            if 'completely' in xdata and xdata['completely'] > 0:
+                ret['time_full'] = xdata['completely']
         return ret
