@@ -9,7 +9,7 @@
 """
 import os
 import time
-from datetime import datetime
+import datetime
 from gamelibtools.util import *
 
 
@@ -25,6 +25,7 @@ class IgdbClient:
         self.screenshot_dir = 'data/screenshots'
         self.covers_dir = 'data/covers'
         self.artwork_dir = 'data/artwork'
+        self.gamecards_dir = 'data/gamecards'
         self.support_data_file = 'igdb_support.json'
         self.support_data = {}
         self.platforms_file = 'igdb_platforms.csv'
@@ -37,6 +38,9 @@ class IgdbClient:
         self.collections = []
         self.engines_file = 'igdb_engines.csv'
         self.engines = []
+        self.games_dict_file = 'igdb_games_dict.csv'
+        self.games_manifest = []
+        self.games_manifest_index = {}
         self.hostname_auth = 'https://id.twitch.tv/oauth2/token'
         self.hostname_api = 'https://api.igdb.com/v4'
         self.hostname_img = 'https://images.igdb.com/image/upload'
@@ -44,6 +48,37 @@ class IgdbClient:
         self.reqlimitms = 250
         self.lastreqtime = 0
         self.countries = {}
+        self.schema_platforms = []
+        self.schema_companies = []
+        self.schema_images = []
+        self.schema_franchises = []
+        self.schema_collections = []
+        self.schema_engines = []
+        self.schema_games = []
+        self.load_schemas()
+
+    def load(self):
+        """ Load authentication data """
+        authobj = json.load(open('config/igdbauth.json'))
+        if not authobj:
+            return
+        if 'clientid' in authobj:
+            self.clientid = authobj['clientid']
+        if 'clientsecret' in authobj:
+            self.clientsecret = authobj['clientsecret']
+
+    def auth(self):
+        """ Authenticate with the remote server """
+        response = requests.post(self.hostname_auth, { 'client_id': self.clientid, 'client_secret': self.clientsecret, 'grant_type': 'client_credentials' })
+        if response is None:
+            return
+        respobj = response.json()
+        if respobj is None or 'access_token' not in respobj:
+            return
+        self.accesstoken = respobj['access_token']
+
+    def load_schemas(self):
+        """ Load data schemas """
         self.schema_platforms = ['id', 'name', 'abbreviation', 'alternative_name', 'platform_type', 'platform_family', 'logo', 'logo_url', {'name': 'generation', 'type': 'int'}, 'slug', {'name': 'versions', 'type': 'list'}]
         self.schema_companies = ['id', 'name', 'description', 'start_date', 'logo', 'logo_url', 'country', 'status', 'parent', 'changed_company', 'change_date', 'slug', 'developed', 'published']
         self.schema_images = ['id', 'name', 'image_id', 'url', {'name': 'width', 'type': 'int'}, {'name': 'height', 'type': 'int'}]
@@ -73,7 +108,6 @@ class IgdbClient:
             {'name': 'game_modes', 'type': 'list'},
             {'name': 'languages', 'type': 'list'},
             {'name': 'localizations', 'type': 'list'},
-            {'name': 'tags', 'type': 'list'},
             {'name': 'keywords', 'type': 'list'},
             {'name': 'themes', 'type': 'list'},
             {'name': 'player_perspectives', 'type': 'list'},
@@ -85,9 +119,9 @@ class IgdbClient:
             {'name': 'onlinemax', 'type': 'int'},
             {'name': 'game_engines', 'type': 'list'},
             {'name': 'time_normal', 'type': 'int'},
-            {'name': 'time_minimal', 'type': 'int'},
-            {'name': 'time_full', 'type': 'int'},
-            {'name': 'time_count', 'type': 'int'},
+            {'name': 'time_minimal', 'type': 'float'},
+            {'name': 'time_full', 'type': 'float'},
+            {'name': 'time_count', 'type': 'float'},
             {'name': 'hypes', 'type': 'int'},
             {'name': 'parent_game', 'type': 'int'},
             {'name': 'similar_games', 'type': 'list'},
@@ -113,27 +147,6 @@ class IgdbClient:
             'url'
         ]
 
-
-    def load(self):
-        """ Load authentication data """
-        authobj = json.load(open('config/igdbauth.json'))
-        if not authobj:
-            return
-        if 'clientid' in authobj:
-            self.clientid = authobj['clientid']
-        if 'clientsecret' in authobj:
-            self.clientsecret = authobj['clientsecret']
-
-    def auth(self):
-        """ Authenticate with the remote server """
-        response = requests.post(self.hostname_auth, { 'client_id': self.clientid, 'client_secret': self.clientsecret, 'grant_type': 'client_credentials' })
-        if response is None:
-            return
-        respobj = response.json()
-        if respobj is None or 'access_token' not in respobj:
-            return
-        self.accesstoken = respobj['access_token']
-
     def load_support_data(self):
         """
         Load support data from a local file
@@ -150,6 +163,8 @@ class IgdbClient:
             os.makedirs(self.covers_dir)
         if not os.path.exists(self.artwork_dir):
             os.makedirs(self.artwork_dir)
+        if not os.path.exists(self.gamecards_dir):
+            os.makedirs(self.gamecards_dir)
         self.countries = json.load(open('config/countries.json'))
         self.load_common_data()
         self.load_companies()
@@ -446,7 +461,7 @@ class IgdbClient:
                             Logger.warning(f"Company '{x['name']}' logo reference invalid: {x['logo']}")
                     if 'start_date' in x and x['start_date'] > 0:
                         try:
-                            dt_object = datetime.fromtimestamp(x['start_date'])
+                            dt_object = datetime.datetime.fromtimestamp(x['start_date'])
                             if 'start_date_format' in x:
                                 y['start_date'] = self._extract_date(dt_object, self.support_data['date_formats'][x['start_date_format']])
                             else:
@@ -455,7 +470,7 @@ class IgdbClient:
                             Logger.warning(f"Company '{x['name']}' established date parsing failed. {e}")
                     if 'change_date' in x and x['change_date'] > 0:
                         try:
-                            dt_object = datetime.fromtimestamp(x['change_date'])
+                            dt_object = datetime.datetime.fromtimestamp(x['change_date'])
                             if 'change_date_format' in x:
                                 y['change_date'] = self._extract_date(dt_object, self.support_data['date_formats'][x['change_date_format']])
                             else:
@@ -625,6 +640,90 @@ class IgdbClient:
             save_data_table(self.engines, fpath, self.schema_engines)
             Logger.log(f"IGDB game engine data loaded")
 
+    def load_game_manifest(self):
+        """ Load games manifest """
+        Logger.sysmsg(f"Loading game data from IGDB...")
+        fpath = self.data_dir + '/' + self.games_dict_file
+        self.games_manifest = []
+        self.games_manifest_index = {}
+        schema = ['id', 'name', 'game_status', 'game_type', 'slug', {'name': 'platforms', 'type': 'list'}]
+        if os.path.exists(fpath):
+            # Lood local data
+            self.games_manifest = load_data_table(fpath, schema)
+            self.games_manifest_index = index_data_table(self.games_manifest)
+            Logger.log(f"IGDB game dictionary data loaded from {fpath}")
+        else:
+            # Import data
+            Logger.log(f"Fetching game dictionary...")
+            self.games_manifest = self._fetch_table('/games', fields='id, name, slug, game_status, game_type, platforms')
+            Logger.log(f"Indexing game dictionary. {len(self.games_manifest)} total games...")
+            for i in range(len(self.games_manifest)):
+                self.games_manifest_index[self.games_manifest[i]['id']] = i
+                if 'game_status' in self.games_manifest[i] and self.games_manifest[i]['game_status'] in self.support_data['game_status']:
+                    self.games_manifest[i]['game_status'] = self.support_data['game_status'][self.games_manifest[i]['game_status']]
+                if 'game_type' in self.games_manifest[i] and self.games_manifest[i]['game_type'] in self.support_data['game_types']:
+                    self.games_manifest[i]['game_type'] = self.support_data['game_types'][self.games_manifest[i]['game_type']]
+                if 'platforms' not in self.games_manifest[i]:
+                    continue
+                np = []
+                for pid in self.games_manifest[i]['platforms']:
+                    pinf = next((item for item in self.platforms if item["id"] == pid), None)
+                    if pinf:
+                        np.append({ 'id': pid, 'name': pinf['name'] })
+                self.games_manifest[i]['platforms'] = np
+
+            # Write data to a CSV file
+            Logger.log(f"Writing data to a file...")
+            save_data_table(self.games_manifest, fpath, schema)
+            Logger.log(f"IGDB games dictionary loaded")
+
+    def calc_platform_stats(self):
+        """ Calculate platform statistics """
+        platforms_stats = { 0: { 'name': '** Games with no platform data **', 'total': 0, 'active': 0, 'games': 0, 'exp': 0, 'remakes': 0, 'bundles': 0 }}
+        Logger.log(f"Calculating game platform stats...")
+        count = 0
+        for game in self.games_manifest:
+            if not game['platforms'] or len(game['platforms']) == 0:
+                platforms_stats[0]['total'] += 1
+                if 'game_status' not in game or game['game_status'] == '' or game['game_status'] == 'Released':
+                    platforms_stats[0]['active'] += 1
+                if 'game_type' in game:
+                    if game['game_type'] == 'Main Game':
+                        platforms_stats[0]['games'] += 1
+                    elif game['game_type'] == 'Remaster' or game['game_type'] == 'Remake':
+                        platforms_stats[0]['remakes'] += 1
+                    elif game['game_type'] == 'Bundle' or game['game_type'] == 'Expanded Game':
+                        platforms_stats[0]['bundles'] += 1
+                    else:
+                        platforms_stats[0]['exp'] += 1
+            else:
+                for pinf in game['platforms']:
+                    if pinf['id'] in platforms_stats:
+                        platforms_stats[pinf['id']]['total'] += 1
+                    else:
+                        platforms_stats[pinf['id']] = { 'name': pinf['name'], 'total': 1, 'active': 0, 'games': 0, 'exp': 0, 'remakes': 0, 'bundles': 0 }
+                    if 'game_status' not in game or game['game_status'] == '' or game['game_status'] == 'Released':
+                        platforms_stats[pinf['id']]['active'] += 1
+                    if 'game_type' in game:
+                        if game['game_type'] == 'Main Game':
+                            platforms_stats[pinf['id']]['games'] += 1
+                        elif game['game_type'] == 'Remaster' or game['game_type'] == 'Remake':
+                            platforms_stats[pinf['id']]['remakes'] += 1
+                        elif game['game_type'] == 'Bundle' or game['game_type'] == 'Expanded Game':
+                            platforms_stats[pinf['id']]['bundles'] += 1
+                        else:
+                            platforms_stats[pinf['id']]['exp'] += 1
+            count += 1
+            if count % 1000 == 0:
+                Logger.report_progress(f"Processing games", count, len(self.games_manifest))
+
+        # Write platform statistics
+        Logger.log("Number of games per platform")
+        Logger.log("                         name                          |  total |  active |  games | remak | bundle |  exp  ")
+        Logger.log("============================================================================================================")
+        for stat in sorted(platforms_stats.items(), key=lambda x: x[1]['total'], reverse=True):
+            Logger.log(f"{stat[1]['name']:55}: {stat[1]['total']:6} | {stat[1]['active']:6} | {stat[1]['games']:6} | {stat[1]['remakes']:5} | {stat[1]['bundles']:5} | {stat[1]['exp']:5}")
+
     def import_games(self):
         """ Import games using the IGDB sources configuration """
         cpath = 'config/igdbsource.json'
@@ -665,7 +764,7 @@ class IgdbClient:
             fpath = f"{self.data_dir}/gamedata_igdb_{pinf['slug']}.csv"
             save_data_table(games, fpath, self.schema_games)
 
-    def import_game_screenshots(self, gid: int) -> list:
+    def import_game_screenshots(self, gid: int, loadimg: bool = True) -> list:
         """ Load game screenshots """
         ret = []
         xdata = self._req('/screenshots', f'fields *; limit 500; where game = {gid};')
@@ -673,7 +772,7 @@ class IgdbClient:
         for ximg in xdata:
             ssurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
             sspath = f"{self.screenshot_dir}/screenshot_{gid}_{cnt}.jpg"
-            if not os.path.exists(sspath):
+            if loadimg and not os.path.exists(sspath):
                 sspath = download_file(sspath, ssurl)
             if sspath:
                 imginf = { 'path': sspath, 'url': ssurl }
@@ -681,7 +780,7 @@ class IgdbClient:
             cnt += 1
         return ret
 
-    def import_game_artwork(self, gid: int) -> list:
+    def import_game_artwork(self, gid: int, loadimg: bool = True) -> list:
         """ Load game artwork """
         ret = []
         if 'artwork_types' not in self.support_data or len(self.support_data['artwork_types']) == 0:
@@ -693,13 +792,44 @@ class IgdbClient:
             atype = self.support_data['artwork_types'][ximg['artwork_type']] if 'artwork_type' in ximg and ximg['artwork_type'] in self.support_data['artwork_types'] else None
             awurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
             awpath = f"{self.artwork_dir}/artwork_{gid}_{cnt}.jpg"
-            if not os.path.exists(awpath):
+            if loadimg and not os.path.exists(awpath):
                 awpath = download_file(awpath, awurl)
             if awpath:
                 imginf = { 'path': awpath, 'url': awurl, 'type': atype }
                 ret.append(imginf)
             cnt += 1
         return ret
+
+    def import_game(self, gid: int, loadscreenshots: bool = True, loadartwork: bool = True, overwrite: bool = False):
+        """ Import and store game card """
+        Logger.log(f"Importing game card for game ID: {gid}")
+        if gid not in self.games_manifest_index:
+            Logger.warning(f"Skipping - Invalid game ID: {gid}")
+            return
+        gname = self.games_manifest[self.games_manifest_index[gid]]['name']
+        gslug = self.games_manifest[self.games_manifest_index[gid]]['slug']
+        Logger.set_context(f"{gid}: {gname}")
+        Logger.dbgmsg(f"Game found")
+        fpath = self.gamecards_dir + f'/{gid:06}_{gslug}.json'
+        if not overwrite and os.path.exists(fpath):
+            Logger.dbgmsg(f"Game card already downloaded")
+            Logger.clear_context()
+            return
+
+        Logger.dbgmsg(f"Fetching game info...")
+        resp = self._req('/games', f'fields *; where id = {gid};')
+        if not resp or len(resp) == 0:
+            Logger.warning(f"No game available on IGDB")
+            Logger.clear_context()
+            return
+        Logger.dbgmsg(f"Resolving references...")
+        game_inf = self._parse_game(resp[0], True, loadscreenshots, loadartwork)
+
+        Logger.dbgmsg(f"Saving game card...")
+        with open(fpath, 'w', encoding='utf-8') as f:
+            json.dump(game_inf, f,  indent=4)
+        Logger.log(f"Game card for saved to {fpath}")
+        Logger.clear_context()
 
     def list_games(self) -> list:
         """ List all games """
@@ -797,14 +927,14 @@ class IgdbClient:
                 Logger.dbgmsg(f"{count} / {total} entries loaded...")
         return ret
 
-    def _fetch_table(self, url: str, query: str = '', cols: list = None, fp = None) -> list:
+    def _fetch_table(self, url: str, query: str = '', cols: list = None, fields: str = '*', fp = None) -> list:
         """ Fetch data table """
         total = self._count(url, query)
         Logger.log(f"{total} entries found. Importing data...")
         count = 0
         ret = []
         while count < total:
-            resp = self._req(url, f'fields *; offset {count}; limit 500; sort id asc; {query};')
+            resp = self._req(url, f'fields {fields}; offset {count}; limit 500; sort id asc; {query};')
             for x in resp:
                 if fp:
                     fp(x, ret)
@@ -814,7 +944,7 @@ class IgdbClient:
                     ret.append(x)
             count += len(resp)
             if total > 1000:
-                Logger.dbgmsg(f"{count} / {total} entries loaded...")
+                Logger.report_progress("Loading entries", count, total)
         return ret
 
     def _check_limits(self):
@@ -863,14 +993,37 @@ class IgdbClient:
                         ret.append(data[x])
         return ret
 
+    def _ref_game(self, src: list|int) -> list|dict|None:
+        """ Resolve game reference(s) """
+        if type(src) is list:
+            ret = []
+            for xid in src:
+                if xid not in self.games_manifest_index:
+                    Logger.warning(f"Error resolving game reference {xid}")
+                    continue
+                ginf = { 'id': xid, 'name': self.games_manifest[self.games_manifest_index[xid]]['name'] }
+                ret.append(ginf)
+            return ret
+        elif type(src) is int:
+            if src not in self.games_manifest_index:
+                Logger.warning(f"Error resolving game reference {src}")
+                return None
+            return { 'id': src, 'name': self.games_manifest[self.games_manifest_index[src]]['name'] }
+        else:
+            return None
+
     def _parse_game(self, data: dict, loadplatforms: bool = False, loadscreenshots: bool = True, loadartwork: bool = True) -> dict:
         """ Parse game data """
-        params = ['id', 'name', 'summary', 'storyline' 'aggregated_rating', 'aggregated_rating_count', 'rating', 'rating_count', 'total_rating', 'total_rating_count',
-                  'hypes', 'parent_game', 'similar_games', 'bundles', 'dlcs', 'expanded_games', 'expansions', 'forks', 'ports', 'remakes', 'remasters',
-                  'standalone_expansions', 'version_title', 'version_parent', 'url', 'slug']
+        params = ['id', 'name', 'summary', 'storyline' 'aggregated_rating', 'aggregated_rating_count', 'rating', 'rating_count', 'total_rating', 'total_rating_count', 'hypes', 'version_title', 'url', 'slug']
+        grefs = ['parent_game', 'similar_games', 'bundles', 'dlcs', 'expanded_games', 'expansions', 'forks', 'ports', 'remakes', 'remasters', 'standalone_expansions', 'version_parent']
         ret = extract_fields(data, params)
+        if not self.support_data or len(self.support_data) == 0:
+            return ret
+        for col in grefs:
+            if col in data:
+                ret[col] = self._ref_game(data[col])
         if 'first_release_date' in data and data['first_release_date'] > 0:
-            ret['first_release_date'] = datetime.fromtimestamp(data['first_release_date']).strftime("%Y-%m-%d")
+            ret['first_release_date'] = datetime.datetime.fromtimestamp(data['first_release_date']).strftime("%Y-%m-%d")
         if 'game_status' in data and data['game_status'] in self.support_data['game_status']:
             ret['game_status'] = self.support_data['game_status'][data['game_status']]
         if 'game_type' in data and data['game_type'] in self.support_data['game_types']:
@@ -888,6 +1041,10 @@ class IgdbClient:
                     ydata['region'] = self.support_data['release_regions'][xdata['release_region']]
                 if 'status' in xdata and xdata['status'] in self.support_data['release_status']:
                     ydata['status'] = self.support_data['release_status'][xdata['status']]
+                if 'platform' in xdata:
+                    pinf = next((item for item in self.platforms if item["id"] == xdata['platform']), None)
+                    if pinf:
+                        ydata['platform'] = pinf['name']
                 ret['release_dates'].append(ydata)
         if 'alternative_names' in data:
             xdata = self._req('/alternative_names', f'fields *; limit 500; where game = {ret['id']};')
@@ -926,30 +1083,6 @@ class IgdbClient:
             ret['player_perspectives'] = self._ref_field(data['player_perspectives'], self.support_data['player_perspectives'])
         if 'keywords' in data:
             ret['keywords'] = self._ref_field(data['keywords'], self.support_data['keywords'])
-        if 'tags' in data:
-            ret['tags'] = []
-            for x in data['tags']:
-                tag_type = (x & 0xf0000000) >> 28
-                tag_id = x & 0x0fffffff
-                tag_source = None
-                match tag_type:
-                    case 0:
-                        # Resolve Theme
-                        tag_source = self.support_data['themes']
-                    case 1:
-                        # Resolve genre
-                        tag_source = self.support_data['genres']
-                    case 2:
-                        # Resolve keyword
-                        tag_source = self.support_data['keywords']
-                    case 3:
-                        # Resolve games
-                        Logger.warning(f"Tag represents a game reference, ID: {tag_id}")
-                    case 4:
-                        # Resolve player perspective
-                        tag_source = self.support_data['player_perspectives']
-                if tag_source and tag_id in tag_source:
-                    ret['tags'].append(tag_source[tag_id])
         if 'themes' in data:
             ret['themes'] = self._ref_field(data['themes'], self.support_data['themes'])
         if 'game_localizations' in data:
@@ -979,41 +1112,43 @@ class IgdbClient:
             xdata = self._req('/multiplayer_modes', f'fields *; limit 500; where game = {ret['id']};')
             if len(xdata) != len(data['multiplayer_modes']):
                 Logger.warning(f"Invalid multiplayer modes for game '{ret['name']}'")
-            if len(xdata) > 1:
-                Logger.warning(f"Multiple multiplayer modes for game '{ret['name']}'")
-            ret['multiplayer_modes'] = []
             modes = ['campaigncoop', 'dropin', 'lancoop', 'offlinecoop', 'onlinecoop', 'splitscreen', 'splitscreenonline']
             pcounts = ['offlinecoopmax', 'offlinemax', 'onlinecoopmax', 'onlinemax']
+            ret['multiplayer_modes'] = []
             for x in xdata:
+                pinf = next((item for item in self.platforms if item["id"] == x['platform']), None) if 'platform' in x else None
+                pname = pinf['name'] if pinf else ''
+                mp_platf_inf = { 'platform': pname, 'multiplayer_modes': [] }
                 for y in modes:
                     if y in x and x[y]:
-                        ret['multiplayer_modes'].append(y)
+                        mp_platf_inf['multiplayer_modes'].append(y)
                 for y in pcounts:
                     if y in x:
-                        ret[y] = x[y]
+                        mp_platf_inf[y] = x[y]
+                ret['multiplayer_modes'].append(mp_platf_inf)
         if 'game_engines' in data:
             ret['game_engines'] = []
             for x in data['game_engines']:
                 xinf = next((item for item in self.engines if item["id"] == x), None)
                 if xinf:
-                    ret['game_engines'].append({ 'id': xinf['id'], 'name': xinf['name'] })
+                    ret['game_engines'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
         if 'collections' in data:
             ret['collections'] = []
             for x in data['collections']:
                 xinf = next((item for item in self.collections if item["id"] == x), None)
                 if xinf:
-                    ret['collections'].append({ 'id': xinf['id'], 'name': xinf['name'] })
+                    ret['collections'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
         if 'franchise' in data:
             ret['franchises'] = []
             xinf = next((item for item in self.franchises if item["id"] == data['franchise']), None)
             if xinf:
-                ret['franchises'].append({ 'id': xinf['id'], 'name': xinf['name'] })
+                ret['franchises'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
         if 'franchises' in data:
             ret['franchises'] = []
             for x in data['franchises']:
                 xinf = next((item for item in self.franchises if item["id"] == x), None)
                 if xinf:
-                    ret['franchises'].append({ 'id': xinf['id'], 'name': xinf['name'] })
+                    ret['franchises'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
         if 'cover' in data:
             xdata = self._req('/covers', f'fields *; limit 500; where id = {data['cover']};')[0]
             covurl = "https:" + xdata['url'].replace("/t_thumb/", "/t_original/")
@@ -1022,10 +1157,10 @@ class IgdbClient:
                 covpath = download_file(covpath, covurl)
             if covpath:
                 ret['cover'] = { 'path': covpath, 'url': covurl }
-        if loadscreenshots and 'screenshots' in data:
-            ret['screenshots'] = self.import_game_screenshots(ret['id'])
-        if loadartwork and 'artworks' in data:
-            ret['artworks'] = self.import_game_artwork(ret['id'])
+        if 'screenshots' in data:
+            ret['screenshots'] = self.import_game_screenshots(ret['id'], loadscreenshots)
+        if 'artworks' in data:
+            ret['artworks'] = self.import_game_artwork(ret['id'], loadartwork)
         if 'videos' in data:
             ret['videos'] = []
             xdata = self._req('/game_videos', f'fields *; limit 500; where game = {ret['id']};')
@@ -1048,8 +1183,8 @@ class IgdbClient:
                 if 'countries' in x:
                     exinf['countries'] = []
                     for cid in x['countries']:
-                        if cid in self.countries:
-                            exinf['countries'].append(self.countries[cid])
+                        if str(cid) in self.countries:
+                            exinf['countries'].append(self.countries[str(cid)])
                         else:
                             Logger.warning(f"Invalid country reference {cid} for external game source")
                 if 'game_release_format' in x and x['game_release_format'] in self.support_data['game_release_formats']:
@@ -1071,9 +1206,9 @@ class IgdbClient:
             if 'count' in xdata and xdata['count'] > 0:
                 ret['time_count'] = xdata['count']
             if 'normally' in xdata and xdata['normally'] > 0:
-                ret['time_normal'] = xdata['normally']
+                ret['time_normal'] = seconds_to_hours(xdata['normally'])
             if 'hastily' in xdata and xdata['hastily'] > 0:
-                ret['time_minimal'] = xdata['hastily']
+                ret['time_minimal'] = seconds_to_hours(xdata['hastily'])
             if 'completely' in xdata and xdata['completely'] > 0:
-                ret['time_full'] = xdata['completely']
+                ret['time_full'] = seconds_to_hours(xdata['completely'])
         return ret

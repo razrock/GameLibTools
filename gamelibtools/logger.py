@@ -29,11 +29,14 @@ class Logger:
         LVLERR: '\033[91m',
         LVLSYS: '\033[92m',
         LVLWRN: '\033[93m',
-        LVLDBG: '\033[94m'
+        LVLMSG: '\033[94m'
     }
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     loglevel = LOGLVL[LVLSYS]
+    inprogmode = False
+    prevlen = 0
+    context = ''
 
     @staticmethod
     def log(msg: str, lvl: str=LVLMSG):
@@ -48,9 +51,9 @@ class Logger:
         if Logger.loglevel < clvl or clvl <= 0 or clvl > Logger.LOGLVL[Logger.LVLDBG]:
             return
         if lvl in Logger.LOGCOL:
-            print(f"{Logger.LOGCOL[lvl]}{msg}{Logger.ENDC}")
+            print(f"{Logger.LOGCOL[lvl]}{Logger.context}{msg}{Logger.ENDC}")
         else:
-            print(f"{msg}")
+            print(f"{Logger.context}{msg}")
 
     @staticmethod
     def sysmsg(msg: str):
@@ -67,6 +70,52 @@ class Logger:
     @staticmethod
     def dbgmsg(msg: str):
         Logger.log(msg, Logger.LVLDBG)
+
+    @staticmethod
+    def set_context(msg: str):
+        Logger.context = '' if msg == '' else msg + ' - '
+
+    @staticmethod
+    def clear_context():
+        Logger.set_context('')
+
+    @staticmethod
+    def report_progress(msg: str, step: int, total: int, lvl: str = LVLDBG):
+        """
+        Report progress
+        :param msg: Message text
+        :param step: Current step
+        :param total: Total steps
+        :param lvl: Logging level
+        """
+        if lvl not in Logger.LOGLVL:
+            return
+        clvl = Logger.LOGLVL[lvl]
+        if Logger.loglevel < clvl or clvl <= 0 or clvl > Logger.LOGLVL[Logger.LVLDBG]:
+            return
+        start = False
+        end = False
+        if not Logger.inprogmode:
+            Logger.inprogmode = True
+            start = True
+        elif step >= total:
+            Logger.inprogmode = False
+            end = True
+
+        backtok = ''
+        for i in range(Logger.prevlen):
+            backtok += '\b'
+        endtok = '' if Logger.inprogmode else '\n'
+        proc = int(100.0 * float(step) / float(total)) if total > 0 else 0
+        if lvl in Logger.LOGCOL and (start or end):
+            if start:
+                txt = f"{Logger.LOGCOL[lvl]}{backtok}{Logger.context}{msg} {step} / {total} ({proc}%)..."
+            else:
+                txt = f"{backtok}{Logger.context}{msg} {step} / {total} ({proc}%)...{Logger.ENDC}"
+        else:
+            txt = f"{backtok}{Logger.context}{msg} {step} / {total} ({proc}%)..."
+        Logger.prevlen = len(txt)
+        print(txt, end=endtok)
 
     @staticmethod
     def set_level(lvl: str):

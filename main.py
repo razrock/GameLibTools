@@ -35,6 +35,7 @@ def main():
                 igdbapi.load()
                 igdbapi.auth()
                 igdbapi.load_support_data()
+                igdbapi.load_game_manifest()
                 if args.platform > 0:
                     igdbapi.import_platform_games(args.platform)
                 else:

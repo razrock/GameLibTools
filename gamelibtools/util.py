@@ -8,8 +8,8 @@
     :license: See LICENSE.txt for full license information
 """
 import csv
+import datetime
 import json
-
 import requests
 from zipfile import ZipFile
 from gamelibtools.logger import Logger
@@ -117,7 +117,7 @@ def get_zip_uncompressed_size(fpath: str) -> int:
 
 def download_file(fpath: str, url: str) -> str|None:
     """ Download file """
-    Logger.log(f"Downloading file {fpath} from {url}...")
+    Logger.dbgmsg(f"Downloading file {fpath} from {url}...")
     try:
         response = requests.get(url)
         if response is None:
@@ -234,3 +234,18 @@ def load_data_table(fpath: str, schema: list) -> list:
         except Exception as e:
             Logger.error(f"Parsing data table {fpath} failed, row {rownum}. {e}")
     return ret
+
+def index_data_table(dtable: list, key: str = 'id') -> dict:
+    """ Index data table"""
+    ret = {}
+    for i in range(len(dtable)):
+        idx = dtable[i][key]
+        ret[idx] = i
+    return ret
+
+def seconds_to_hours(vsec: int) -> float:
+    """ Convert number of seconds to number of hours """
+    vhours = vsec / 3600.0
+    vhoursi = int(vhours)
+    diffm = vhours - float(vhoursi)
+    return float(vhoursi) if diffm < 0.33 else (float(vhoursi + 1) if diffm >= 0.67 else float(vhoursi) + 0.5)
