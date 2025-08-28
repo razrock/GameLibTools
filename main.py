@@ -36,10 +36,7 @@ def main():
                 igdbapi.auth()
                 igdbapi.load_support_data()
                 igdbapi.load_game_manifest()
-                if args.platform > 0:
-                    igdbapi.import_platform_games(args.platform)
-                else:
-                    igdbapi.import_games()
+                igdbapi.import_games()
             else:
                 print(f"Unknown data source ({args.source}). Exiting...")
         else:

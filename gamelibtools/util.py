@@ -7,13 +7,12 @@
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
-import csv
-import datetime
-import json
 import requests
+import dateutil
 from zipfile import ZipFile
 from gamelibtools.logger import Logger
 from io import BytesIO
+from dateutil.parser import parser
 
 
 def extract_html_content(uielem, splitarr: bool=True) -> str:
@@ -131,117 +130,21 @@ def download_file(fpath: str, url: str) -> str|None:
         Logger.error(f"Downloading file {fpath} from {url} failed. {e}")
         return None
 
-def get_schema_columns(schema: list) -> list:
-    """ Parse schema columns """
-    ret = []
-    for c in schema:
-        if type(c) is str:
-            ret.append(c)
-        elif type(c) is dict and 'name' in c:
-            ret.append(c['name'])
-        else:
-            raise Exception(f'Invalid data column definition: {c}')
-    return ret
-
-def extract_fields(src: dict, params: list) -> dict:
-    """ Extract fields from a object (dict) """
-    z = {}
-    for y in params:
-        if y in src:
-            z[y] = src[y]
-    return z
-
-def list_fields(src: dict, schema: list) -> list:
-    """ List data fields in a data row """
-    z = []
-    for y in schema:
-        name = y if type(y) is str else y['name']
-        dtyp = ('int' if name == 'id' else 'str') if type(y) is str else y['type']
-        if name in src and src[name]:
-            if dtyp == 'list' or dtyp == 'dict':
-                z.append(json.dumps(src[name]))
-            elif dtyp == 'int':
-                z.append(int(src[name]))
-            elif dtyp == 'float':
-                z.append(float(src[name]))
-            else:
-                z.append(src[name])
-        else:
-            z.append(None)
-    return z
-
-def parse_fields(src: list, schema: list) -> dict:
-    """ Parse data row """
-    ret = {}
-    for i in range(len(schema)):
-        if i >= len(src):
-            break
+def extract_year(dtstr: str) -> int:
+    """Extract year from a date/time string """
+    if not dtstr or dtstr == '' or dtstr == 'TBD':
+        return 0
+    try:
+        return dateutil.parser.parse(dtstr).year
+    except Exception:
+        if len(dtstr) == 4 and dtstr.isnumeric():
+            return int(dtstr)
         try:
-            name = schema[i] if type(schema[i]) is str else schema[i]['name']
-            dtyp = ('int' if name == 'id' else 'str') if type(schema[i]) is str else schema[i]['type']
-            if dtyp == 'list' or dtyp == 'dict':
-                ret[name] = json.loads(src[i]) if src[i] != "" else None
-            elif dtyp == 'int':
-                ret[name] = int(src[i]) if src[i] != "" else None
-            elif dtyp == 'float':
-                ret[name] = float(src[i]) if src[i] != "" else None
-            else:
-                ret[name] = src[i]
-        except Exception as e:
-            raise Exception(f"Parsing data column {i}: {schema[i]} failed - {src[i]}")
-    return ret
-
-def save_data_table(rows: list, fpath: str, schema: list):
-    """
-    Export games data table to a CSV file
-    :param rows: Data table
-    :param fpath: File path
-    :param schema: Data table schema
-    """
-    with open(fpath, 'w', newline='', encoding='utf8') as csvfile:
-        cols = get_schema_columns(schema)
-        writer = csv.writer(csvfile, lineterminator='\r\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
-        writer.writerow(cols)
-
-        for row in rows:
-            rdata = list_fields(row, schema)
-            writer.writerow(rdata)
-    Logger.log(f"Data table stored to {fpath}")
-
-def load_data_table(fpath: str, schema: list) -> list:
-    """ Load data table """
-    ret = []
-    checkheader = False
-    rownum = 0
-    cols = get_schema_columns(schema)
-    with open(fpath, 'r', newline='\r\n', encoding='utf8') as csvfile:
-        reader = csv.reader(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
-        try:
-            for row in reader:
-                if not checkheader:
-                    if len(row) != len(schema):
-                        Logger.error(f"Loading table data from {fpath} failed. Column schema missmatch")
-                        return []
-                    for i in range(len(row)):
-                        if row[i] != cols[i]:
-                            Logger.error(f"Loading table data from {fpath} failed. Column schema missmatch (column {i})")
-                            return []
-                    checkheader = True
-                    continue
-                y = parse_fields(row, schema)
-                ret.append(y)
-                rownum += 1
-        except Exception as e:
-            Logger.error(f"Parsing data table {fpath} failed, row {rownum}. {e}")
-    return ret
-
-def index_data_table(dtable: list, key: str = 'id') -> dict:
-    """ Index data table"""
-    ret = {}
-    for i in range(len(dtable)):
-        idx = dtable[i][key]
-        ret[idx] = i
-    return ret
+            if dtstr[0] == 'Q':
+                tokens = dtstr.split(' ')
+                return int(tokens[1])
+        except Exception:
+            return 0
 
 def seconds_to_hours(vsec: int) -> float:
     """ Convert number of seconds to number of hours """
