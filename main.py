@@ -35,7 +35,9 @@ def main():
                 igdbapi.load()
                 igdbapi.auth()
                 igdbapi.load_support_data()
+                igdbapi.load_game_caches()
                 igdbapi.load_game_manifest()
+                igdbapi.update_game_ratings()
                 igdbapi.import_games()
             else:
                 print(f"Unknown data source ({args.source}). Exiting...")

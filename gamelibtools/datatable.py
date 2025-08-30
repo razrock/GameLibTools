@@ -65,19 +65,11 @@ class DataTable:
         ret = []
         checkheader = False
         rownum = 0
-        cols = DataTable.get_schema_columns(schema)
         with open(fpath, 'r', newline='\r\n', encoding='utf8') as csvfile:
             reader = csv.reader(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
             try:
                 for row in reader:
                     if not checkheader:
-                        if len(row) > len(schema):
-                            Logger.error(f"Loading table data from {fpath} failed. Column schema missmatch")
-                            return []
-                        for i in range(len(row)):
-                            if row[i] != cols[i]:
-                                Logger.error(f"Loading table data from {fpath} failed. Column schema missmatch (column {i})")
-                                return []
                         checkheader = True
                         continue
                     y = DataTable.parse_fields(row, schema)
@@ -166,6 +158,8 @@ class DataTable:
                     z.append(int(src[name]))
                 elif dtyp == 'float':
                     z.append(float(src[name]))
+                elif dtyp == 'bool':
+                    z.append(1 if src[name] else 0)
                 else:
                     z.append(src[name])
             else:
@@ -188,6 +182,8 @@ class DataTable:
                     ret[name] = int(src[i]) if src[i] != "" else None
                 elif dtyp == 'float':
                     ret[name] = float(src[i]) if src[i] != "" else None
+                elif dtyp == 'bool':
+                    ret[name] = int(src[i]) != 0 if src[i] != "" else None
                 else:
                     ret[name] = src[i]
             except Exception as e:
@@ -203,6 +199,20 @@ class DataTable:
                 ret.append(c)
             elif type(c) is dict and 'name' in c:
                 ret.append(c['name'])
+            else:
+                raise Exception(f'Invalid data column definition: {c}')
+        return ret
+
+    @staticmethod
+    def get_schema_fields(schema: list) -> str:
+        """ Extract schema fields """
+        ret = ''
+        for c in schema:
+            ret += '' if len(ret) == 0 else ', '
+            if type(c) is str:
+                ret += c
+            elif type(c) is dict and 'name' in c:
+                ret += c['name']
             else:
                 raise Exception(f'Invalid data column definition: {c}')
         return ret

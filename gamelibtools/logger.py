@@ -50,10 +50,16 @@ class Logger:
         clvl = Logger.LOGLVL[lvl]
         if Logger.loglevel < clvl or clvl <= 0 or clvl > Logger.LOGLVL[Logger.LVLDBG]:
             return
+        backtok = ''
+        if Logger.inprogmode:
+            for i in range(Logger.prevlen):
+                backtok += '\b' + Logger.ENDC
+            Logger.prevlen = 0
+            Logger.inprogmode = False
         if lvl in Logger.LOGCOL:
-            print(f"{Logger.LOGCOL[lvl]}{Logger.context}{msg}{Logger.ENDC}")
+            print(f"{backtok}{Logger.LOGCOL[lvl]}{Logger.context}{msg}{Logger.ENDC}")
         else:
-            print(f"{Logger.context}{msg}")
+            print(f"{backtok}{Logger.context}{msg}")
 
     @staticmethod
     def sysmsg(msg: str):
