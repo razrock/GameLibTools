@@ -10,39 +10,42 @@
 import sys
 import argparse
 
-from gamelibtools.igdbclient import IgdbClient
-from gamelibtools.wikiimporter import *
+from gamelibtools.igdbsync import *
 from gamelibtools.logger import *
 
 def main():
     """ Application entry point """
     # parse command line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', help='Command')
-    parser.add_argument('-source', help='Data Source')
-    parser.add_argument('-platform', help='Platform ID', type=int, default=0)
+    parser.add_argument('-cmd', help='Initial command')
+    parser.add_argument('-datadir', help='Data directory', default='data')
     args = parser.parse_args()
 
-    # Command selector
-    Logger.set_level(Logger.LVLDBG)
+    Logger.set_level(Logger.LVLMSG)
+    # =============================================================================================
+    # Supported commands
+    #
+    # sync                      Sync database
+    # stats                     Print DB stats
+    # quit                      Exit program
+    #
+    # =============================================================================================
+
+    # Command processor loop
     try:
-        if args.command == "import":
-            if args.source == "wiki":
-                datamgr = WikiImporter()
-                datamgr.run()
-            elif args.source == "igdb":
-                igdbapi = IgdbClient()
-                igdbapi.load()
-                igdbapi.auth()
-                igdbapi.load_support_data()
-                igdbapi.load_game_caches()
-                igdbapi.load_game_manifest()
-                igdbapi.update_game_ratings()
-                igdbapi.import_games()
-            else:
-                print(f"Unknown data source ({args.source}). Exiting...")
-        else:
-            print(f"Unknown command ({args.command}). Exiting...")
+        datamgr = IgdbSync(args.datadir)
+        datamgr.load()
+        while True:
+            cmd = input("IGDB :> ")
+            match cmd:
+                case 'sync':
+                    datamgr.sync()
+                case 'stats':
+                    datamgr.calc_stats()
+                case 'quit':
+                    break
+                case _:
+                    print(f"Unknown command ({cmd}). Please try again")
     except Exception as conerr:
         print('Error occurred: ' + conerr.__str__())
         sys.exit(1)

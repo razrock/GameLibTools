@@ -289,5 +289,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 /data/
-/config/
+/config/ 
+/logs/
 credentials.json
