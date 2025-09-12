@@ -42,6 +42,11 @@ class IgdbClient:
             return None
         return response.json()
 
+    def maxval(self, url: str, col: str):
+        """ Get max column value """
+        resp = self.req(url, f'fields {col}; limit 1; sort {col} desc;')
+        return resp[0][col] if resp and len(resp) > 0 and col in resp[0] else None
+
     def count(self, url: str, query: str = '') -> int:
         """ Count data records """
         resp = self.req(url if url.endswith('/count') else url + '/count', query)

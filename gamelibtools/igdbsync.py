@@ -7,9 +7,12 @@
     :license: This software is licensed under the MIT license
     :license: See LICENSE.txt for full license information
 """
+import copy
 import datetime
 import json
 import os
+from types import NoneType
+
 from gamelibtools.dataset import DataSet
 from gamelibtools.datatable import DataTable
 from gamelibtools.igdbclient import IgdbClient
@@ -93,8 +96,7 @@ class IgdbSync:
         self.dataset.sync()
 
         # Sync game manifest -> Update platform indices
-        Logger.log(f"Syncing table '{self.games_manifest.name}'...")
-        self.dataset.fetch_table(self.games_manifest, self._proc_game_diff, f'where {self.games_manifest.tscol} > {self.games_manifest.lastupdate}')
+        self.dataset.sync_table(self.games_manifest, self._proc_game_diff)
 
         # Save changes
         if not self.games_manifest.issaved:
@@ -103,6 +105,52 @@ class IgdbSync:
             if not self.games_plaforms_index[pid].issaved:
                 self.games_plaforms_index[pid].save()
         self.dataset.save()
+
+    def import_game(self, gid: int, loadscreenshots: bool = True, loadartwork: bool = True, overwrite: bool = False):
+        """ Import and store game card """
+        Logger.log(f"Importing game card for game ID: {gid}")
+        if not self.isloaded:
+            Logger.warning(f"Unable to import game data. Games manifest not loaed")
+            return
+        if gid not in self.games_manifest.index:
+            Logger.warning(f"Skipping - Invalid game ID: {gid}")
+            return
+
+        # Check if game card is already downloaded
+        gameinf = copy.deepcopy(self.games_manifest.get_row(gid))
+        Logger.set_context(f"{gid}: {gameinf['name']}")
+        fpath = self.gamecards_dir + f'/{gid:06}_{gameinf['slug']}.json'
+        if not overwrite and os.path.exists(fpath):
+            Logger.dbgmsg(f"Game card already downloaded")
+            Logger.clear_context()
+            return
+
+        # Get data from IGDB
+        Logger.dbgmsg(f"Fetching game info...")
+        resp = self.apiclient.req(self.games_manifest.backend, f'fields *; exclude {self.games_manifest.get_fields()}; where id = {gid};')
+        if not resp or len(resp) == 0:
+            Logger.warning(f"No game available on IGDB")
+            Logger.clear_context()
+            return
+
+        # Resolve references / Composite data
+        Logger.dbgmsg(f"Resolving references...")
+        self._proc_game_row(resp[0], gameinf, self.dataset.sources['games']['schema'], loadscreenshots, loadartwork)
+
+        # Save game card
+        Logger.dbgmsg(f"Saving game card...")
+        with open(fpath, 'w', encoding='utf-8') as f:
+            json.dump(gameinf, f,  indent=4)
+        Logger.log(f"Game card for '{gameinf['name']}' saved to '{fpath}'")
+        Logger.clear_context()
+
+    def import_screenshots(self, gid: int):
+        """ Load game screenshots """
+        self._import_game_images(gid, 'screenshots', 'screenshots', 'screenshots', self.screenshot_dir, 'screenshot')
+
+    def import_artwork(self, gid: int):
+        """ Load game artwork """
+        self._import_game_images(gid, 'artwork images', 'artworks', 'artworks', self.artwork_dir, 'artwork')
 
     def calc_stats(self):
         """ Calculate statistics """
@@ -350,7 +398,49 @@ class IgdbSync:
                     Logger.report_progress("Processing game entry", ind + 1, total)
             self.games_plaforms_index[pid].save()
 
-    def _proc_game_manifest_row(self, srcrow: dict, dstrow: dict|None, schema: list, tkey: str) -> dict:
+    def _import_game_images(self, gid: int, iname: str, prop: str, dtable: str, imgdir: str, fpref: str):
+        """ Import / load game related images """
+        Logger.log(f"Importing game {iname} for game ID: {gid}")
+        gameinf = self.games_manifest.get_row(gid)
+        if gameinf is None:
+            Logger.error(f"Unable to load game {iname}. Invalid game ID")
+            return
+
+        Logger.set_context(f"{gid}: {gameinf['name']}")
+        Logger.dbgmsg("Game manifest found. Searching for game card...")
+        fpath = self.gamecards_dir + f'/{gid:06}_{gameinf['slug']}.json'
+        if os.path.exists(fpath):
+            Logger.dbgmsg(f"Game card '{fpath}' found. Loading data...")
+            gamedata = json.load(open(fpath, 'r', encoding='utf-8'))
+            if not gamedata:
+                Logger.error(f"Unable to load game {iname}. Game card '{fpath}' is corrupted")
+                Logger.clear_context()
+                return
+            if prop not in gamedata or not gamedata[prop]:
+                Logger.error(f"Unable to load game {iname}. No images defined for the specified game")
+                Logger.clear_context()
+                return
+            Logger.dbgmsg(f"Game card '{fpath}' loaded. Downloading images...")
+            cnt = 0
+            for imginf in gamedata[prop]:
+                if not os.path.exists(imginf['path']):
+                    download_file(imginf['path'], imginf['url'])
+                    cnt += 1
+            Logger.clear_context()
+            Logger.log(f"{cnt} {iname} imported for game '{gameinf['name']}'")
+        else:
+            # Obtain image data from IGDB
+            resp = self.apiclient.req(self.games_manifest.backend, f'fields {prop}; where id = {gid};')
+            if resp is None or len(resp) == 0 or prop not in resp[0] or not resp[0][prop] or len(resp[0][prop]) == 0:
+                Logger.error("Unable to load game {iname}. No images defined for the specified game")
+                Logger.clear_context()
+                return
+            cnt = len(resp[0][prop])
+            self._resolve_game_images(gid, resp[0][prop], dtable, imgdir, fpref, True)
+            Logger.clear_context()
+            Logger.log(f"{cnt} {iname} imported for game '{gameinf['name']}'")
+
+    def _proc_game_manifest_row(self, srcrow: dict, dstrow: dict|None, schema: list, tkey: str = '') -> dict:
         """ Resolve games manifest entry references """
         try:
             ret = {}
@@ -462,6 +552,116 @@ class IgdbSync:
             ret['year'] = relyear if relyear > 0 else None
         return ret
 
+    def _proc_game_row(self, srvrow: dict, locrow: dict, schema: list, loadscreenshots: bool = True, loadartwork: bool = True):
+        """ Process game table row """
+        try:
+            drefs = ['player_perspectives', 'keywords', 'themes', 'collections', 'websites', 'language_supports', 'external_games']
+            grefs = ['parent_game', 'similar_games', 'bundles', 'dlcs', 'expanded_games', 'expansions', 'forks', 'ports', 'remakes', 'remasters', 'standalone_expansions', 'version_parent']
+            prefs = ['time_normal', 'time_minimal', 'time_full', 'time_count']
+            for cx in schema:
+                srckey = cx['field'] if 'field' in cx else cx['name']
+                dstkey = cx['name']
+                isproc = 'calc' in cx and len(cx['calc']) > 0
+                if srckey not in srvrow and not isproc:
+                    continue
+
+                if srckey in drefs:
+                    locrow[dstkey] = self.dataset.resolve_ref(srvrow[srckey], cx['ref'], cx['prop'])
+                elif srckey in grefs:
+                    locrow[dstkey] = self._resolve_game_ref(srvrow[srckey])
+                elif srckey in prefs:
+                    ptinf = self.dataset.get_table(cx['ref']).find_row(cx['calc'], srvrow['id'])
+                    if ptinf:
+                        locrow[dstkey] = seconds_to_hours(ptinf[cx['prop']]) if cx['type'] == 'float' and ptinf[cx['prop']] else ptinf[cx['prop']]
+                elif srckey == 'first_release_date':
+                    locrow[dstkey] = datetime.datetime.fromtimestamp(srvrow[srckey]).strftime("%Y-%m-%d") if srvrow[srckey] > 0 else None
+                elif srckey == 'franchises':
+                    rx = []
+                    if 'franchise' in srvrow:
+                        rx.append(self.dataset.resolve_ref(srvrow['franchise'], cx['ref'], cx['prop']))
+                    if 'franchises' in srvrow:
+                        rx = rx + self.dataset.resolve_ref(srvrow['franchises'], cx['ref'], cx['prop'])
+                    locrow[dstkey] = rx
+                elif srckey == 'game_localizations':
+                    locrow[dstkey] = self.dataset.resolve_ref(srvrow[srckey], cx['ref'], cx['prop'])
+                    for x in locrow[dstkey]:
+                        x['region'] = self.dataset.resolve_ref(x['region'], 'regions', 'name')
+                elif srckey == 'age_ratings':
+                    locrow[dstkey] = self.dataset.resolve_ref(srvrow[srckey], cx['ref'], cx['prop'])
+                    for x in locrow[dstkey]:
+                        x['organization'] = self.dataset.resolve_ref(x['organization'], 'age_rating_organizations', 'name')
+                        x['rating'] = self.dataset.resolve_ref(x['rating'], 'age_rating_categories', 'rating')
+                        x['descriptions'] = self.dataset.resolve_ref(x['descriptions'], 'age_rating_content_descriptions', 'description')
+                elif srckey == 'videos':
+                    locrow[dstkey] = self.dataset.resolve_ref(srvrow[srckey], cx['ref'], cx['prop'])
+                    for x in locrow[dstkey]:
+                        x['url'] = 'https://www.youtube.com/watch?v=' + x['video_id']
+                        x.pop('video_id')
+                elif srckey == 'multiplayer_modes':
+                    mpdata = self.dataset.resolve_ref(srvrow[srckey], cx['ref'], cx['prop'])
+                    rx = []
+                    for x in mpdata:
+                        x['platform'] = self.dataset.resolve_ref(x['platform'], 'platforms', 'name')
+                        x.pop('id')
+                        x.pop('game')
+                        rem = []
+                        for key, val in x.items():
+                            if type(val) is NoneType:
+                                rem.append(key)
+                            elif type(val) is int and val == 0:
+                                rem.append(key)
+                        for key in rem:
+                            x.pop(key)
+                        rx.append(x)
+                    locrow[srckey] = rx
+                elif srckey == 'cover':
+                    imgurl = 'https:' + self.dataset.resolve_ref(srvrow[srckey], cx['ref'], cx['prop']).replace("/t_thumb/", "/t_original/")
+                    imgpath = f"{self.covers_dir}/cover_{locrow['slug']}_{locrow['id']}.jpg"
+                    locrow[srckey] = { 'path': imgpath, 'url': imgurl }
+                    if not os.path.exists(imgpath):
+                        download_file(imgpath, imgurl)
+                elif srckey == 'screenshots':
+                    locrow[srckey] = self._resolve_game_images(locrow['id'], srvrow[srckey], 'screenshots', self.screenshot_dir, 'screenshot', loadscreenshots)
+                elif srckey == 'artworks':
+                    locrow[srckey] = self._resolve_game_images(locrow['id'], srvrow[srckey], 'artworks', self.artwork_dir, 'artwork', loadartwork)
+                else:
+                    locrow[dstkey] = srvrow[srckey]
+        except Exception as e:
+            Logger.error(f"Game data parsing failed, row ID {srvrow['id']}: {srvrow}. {e}")
+            raise e
+
+    def _resolve_game_ref(self, src: list|int) -> list|dict|None:
+        """ Resolve game reference(s) """
+        if type(src) is list:
+            ret = []
+            for xid in src:
+                if not self.games_manifest.in_index(xid):
+                    Logger.warning(f"Error resolving game reference {xid}")
+                    continue
+                ginf = { 'id': xid, 'name': self.games_manifest.get_row(xid)['name'] }
+                ret.append(ginf)
+            return ret
+        elif type(src) is int:
+            if not self.games_manifest.in_index(src):
+                Logger.warning(f"Error resolving game reference {src}")
+                return None
+            return { 'id': src, 'name': self.games_manifest.get_row(src)['name'] }
+        else:
+            return None
+
+    def _resolve_game_images(self, gid: int, imgids: list, dtable: str, imgdir: str, fpref: str, download: bool) -> list:
+        """ Resolve and download game related images """
+        rx = []
+        cnt = 1
+        imginfs = self.dataset.resolve_ref(imgids, dtable, 'url')
+        for imginf in imginfs:
+            imgurl = 'https:' + imginf.replace("/t_thumb/", "/t_original/")
+            imgpath = f"{imgdir}/{fpref}_{gid}_{cnt}.jpg"
+            rx.append({ 'path': imgpath, 'url': imgurl })
+            if download and not os.path.exists(imgpath):
+                download_file(imgpath, imgurl)
+            cnt += 1
+        return rx
 
 class IgdbSyncL:
     """ IGDB data / sync manager """
@@ -506,402 +706,3 @@ class IgdbSyncL:
 
         # Import game cards
         # TODO: Import game cards from platform index -> Apply filtering, store current ID
-
-    def import_game_screenshots(self, gid: int, loadimg: bool = True) -> list:
-        """ Load game screenshots """
-        ret = []
-        xdata = self._req('/screenshots', f'fields *; limit 500; where game = {gid};')
-        cnt = 1
-        for ximg in xdata:
-            ssurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
-            sspath = f"{self.screenshot_dir}/screenshot_{gid}_{cnt}.jpg"
-            if loadimg and not os.path.exists(sspath):
-                sspath = download_file(sspath, ssurl)
-            if sspath:
-                imginf = { 'path': sspath, 'url': ssurl }
-                ret.append(imginf)
-            cnt += 1
-        return ret
-
-    def import_game_artwork(self, gid: int, loadimg: bool = True) -> list:
-        """ Load game artwork """
-        ret = []
-        if 'artwork_types' not in self.support_data or len(self.support_data['artwork_types']) == 0:
-            Logger.warning("Unable to load game artwork. Support data not loaded")
-            return ret
-        xdata = self._req('/artworks', f'fields *; limit 500; where game = {gid};')
-        cnt = 1
-        for ximg in xdata:
-            atype = self.support_data['artwork_types'][ximg['artwork_type']] if 'artwork_type' in ximg and ximg['artwork_type'] in self.support_data['artwork_types'] else None
-            awurl = "https:" + ximg['url'].replace("/t_thumb/", "/t_original/")
-            awpath = f"{self.artwork_dir}/artwork_{gid}_{cnt}.jpg"
-            if loadimg and not os.path.exists(awpath):
-                awpath = download_file(awpath, awurl)
-            if awpath:
-                imginf = { 'path': awpath, 'url': awurl, 'type': atype }
-                ret.append(imginf)
-            cnt += 1
-        return ret
-
-    def import_game(self, gid: int, loadscreenshots: bool = True, loadartwork: bool = True, overwrite: bool = False):
-        """ Import and store game card """
-        Logger.log(f"Importing game card for game ID: {gid}")
-        if gid not in self.games_manifest.index:
-            Logger.warning(f"Skipping - Invalid game ID: {gid}")
-            return
-        gname = self.games_manifest.get_row(gid)['name']
-        gslug = self.games_manifest.get_row(gid)['slug']
-        Logger.set_context(f"{gid}: {gname}")
-        Logger.dbgmsg(f"Game found")
-        fpath = self.gamecards_dir + f'/{gid:06}_{gslug}.json'
-        if not overwrite and os.path.exists(fpath):
-            Logger.dbgmsg(f"Game card already downloaded")
-            Logger.clear_context()
-            return
-
-        Logger.dbgmsg(f"Fetching game info...")
-        resp = self._req('/games', f'fields *; exclude game_status, game_type, alternative_names, release_dates, genres, involved_companies, platforms; where id = {gid};')
-        if not resp or len(resp) == 0:
-            Logger.warning(f"No game available on IGDB")
-            Logger.clear_context()
-            return
-        Logger.dbgmsg(f"Resolving references...")
-        game_inf = self._parse_game(resp[0], True, loadscreenshots, loadartwork)
-
-        Logger.dbgmsg(f"Saving game card...")
-        with open(fpath, 'w', encoding='utf-8') as f:
-            json.dump(game_inf, f,  indent=4)
-        Logger.dbgmsg(f"Game card for saved to {fpath}")
-        Logger.clear_context()
-
-    def _extract_date(self, dt, dformat: str) -> str:
-        """ Extract and serialize timestamp """
-        if dformat == "YYYY":
-            return dt.strftime("%Y")
-        if dformat == "YYYYMM":
-            return dt.strftime("%Y-%m")
-        if dformat == "YYYYQ1":
-            return dt.strftime("%Y") + "-02"
-        if dformat == "YYYYQ2":
-            return dt.strftime("%Y") + "-05"
-        if dformat == "YYYYQ3":
-            return dt.strftime("%Y") + "-08"
-        if dformat == "YYYYQ4":
-            return dt.strftime("%Y") + "-11"
-        return dt.strftime("%Y-%m-%d")
-
-    def _ref_field(self, src: list, data: list|dict, cols: list = None) -> list:
-        """ Resolve field references """
-        ret = []
-        remap = cols and len(cols) > 0
-        if type(data) is list:
-            # Resolve references from a data table
-            for x in src:
-                xinf = next((item for item in data if item["id"] == x), None)
-                if not xinf:
-                    continue
-                if remap and type(data[x]) is dict:
-                    ret.append(DataTable.extract_fields(xinf, cols))
-                else:
-                    ret.append(xinf)
-        else:
-            # Resolve references from a data map
-            for x in src:
-                if x in data:
-                    if remap and type(data[x]) is dict:
-                        ret.append(DataTable.extract_fields(data[x], cols))
-                    else:
-                        ret.append(data[x])
-        return ret
-
-    def _ref_game(self, src: list|int) -> list|dict|None:
-        """ Resolve game reference(s) """
-        if type(src) is list:
-            ret = []
-            for xid in src:
-                if not self.games_manifest.in_index(xid):
-                    Logger.warning(f"Error resolving game reference {xid}")
-                    continue
-                ginf = { 'id': xid, 'name': self.games_manifest.get_row(xid)['name'] }
-                ret.append(ginf)
-            return ret
-        elif type(src) is int:
-            if not self.games_manifest.in_index(src):
-                Logger.warning(f"Error resolving game reference {src}")
-                return None
-            return { 'id': src, 'name': self.games_manifest.get_row(src)['name'] }
-        else:
-            return None
-
-    def _parse_game(self, data: dict, loadplatforms: bool = False, loadscreenshots: bool = True, loadartwork: bool = True) -> dict:
-        """ Parse game data """
-        params = ['id', 'name', 'summary', 'storyline' 'aggregated_rating', 'aggregated_rating_count', 'rating', 'rating_count', 'total_rating', 'total_rating_count', 'hypes', 'version_title', 'url', 'slug']
-        grefs = ['parent_game', 'similar_games', 'bundles', 'dlcs', 'expanded_games', 'expansions', 'forks', 'ports', 'remakes', 'remasters', 'standalone_expansions', 'version_parent']
-        ret = DataTable.extract_fields(data, params)
-        if not self.support_data or len(self.support_data) == 0:
-            return ret
-        ginf = self.games_manifest.get_row(ret['id'])
-        if ginf is None:
-            return ret
-
-        # Fetch data from the game manifest
-        ret['release_dates'] = ginf['release_dates']
-        ret['alternative_names'] = ginf['alternative_names']
-        ret['developers'] = ginf['developers']
-        ret['publishers'] = ginf['publishers']
-        ret['genres'] = ginf['genres']
-        ret['platforms'] = ginf['platforms']
-        ret['game_status'] = ginf['game_status']
-        ret['game_type'] = ginf['game_type']
-
-        # Resolve game references
-        for col in grefs:
-            if col in data:
-                ret[col] = self._ref_game(data[col])
-
-        # Resolve data references
-        if 'first_release_date' in data and data['first_release_date'] > 0:
-            ret['first_release_date'] = datetime.datetime.fromtimestamp(data['first_release_date']).strftime("%Y-%m-%d")
-        # if 'game_status' in data and data['game_status'] in self.support_data['game_status']:
-        #     ret['game_status'] = self.support_data['game_status'][data['game_status']]
-        # if 'game_type' in data and data['game_type'] in self.support_data['game_types']:
-        #     ret['game_type'] = self.support_data['game_types'][data['game_type']]
-        if 'game_modes' in data:
-            ret['game_modes'] = self._ref_field(data['game_modes'], self.support_data['game_modes'])
-        # if 'genres' in data:
-        #     ret['genres'] = self._ref_field(data['genres'], self.support_data['genres'])
-        # if 'release_dates' in data:
-        #     ret['release_dates'] = []
-        #     for xid in data['release_dates']:
-        #         xdata = self._req('/release_dates', f'fields *; limit 500; where id = {xid};')[0]
-        #         ydata = { 'date': xdata['human'] }
-        #         if 'release_region' in xdata and xdata['release_region'] in self.support_data['release_regions']:
-        #             ydata['region'] = self.support_data['release_regions'][xdata['release_region']]
-        #         if 'status' in xdata and xdata['status'] in self.support_data['release_status']:
-        #             ydata['status'] = self.support_data['release_status'][xdata['status']]
-        #         if 'platform' in xdata:
-        #             pinf = self.platforms.get_row(xdata['platform'])
-        #             if pinf:
-        #                 ydata['platform'] = pinf['name']
-        #         ret['release_dates'].append(ydata)
-        # if 'alternative_names' in data:
-        #     xdata = self._req('/alternative_names', f'fields *; limit 500; where game = {ret['id']};')
-        #     ret['alternative_names'] = []
-        #     for x in xdata:
-        #         ret['alternative_names'].append(x['name'])
-        # if 'involved_companies' in data:
-        #     ret['developers'] = []
-        #     ret['publishers'] = []
-        #     ret['porting'] = []
-        #     ret['support'] = []
-        #     for xid in data['involved_companies']:
-        #         xdata = self._req('/involved_companies', f'fields *; limit 500; where id = {xid};')[0]
-        #         cinf = self.companies.get_row(xdata['company'])
-        #         if cinf:
-        #             xinf = { 'id': cinf['id'], 'name': cinf['name'] }
-        #             if 'developer' in xdata and xdata['developer']:
-        #                 ret['developers'].append(xinf)
-        #             if 'publisher' in xdata and xdata['publisher']:
-        #                 ret['publishers'].append(xinf)
-        #             if 'porting' in xdata and xdata['porting']:
-        #                 ret['porting'].append(xinf)
-        #             if 'supporting' in xdata and xdata['supporting']:
-        #                 ret['supporting'].append(xinf)
-        #             if len(ret['porting']) == 0:
-        #                 ret.pop('porting')
-        #             if len(ret['support']) == 0:
-        #                 ret.pop('support')
-        # if loadplatforms and 'platforms' in data:
-        #     ret['platforms'] = []
-        #     for pid in data['platforms']:
-        #         pinf = self.platforms.get_row(pid)
-        #         if not pinf:
-        #             continue
-        #         ret['platforms'].append(pinf['name'])
-        if 'language_supports' in data:
-            ret['languages'] = []
-            xdata = self._req('/language_supports', f'fields *; limit 500; where game = {ret['id']};')
-            if len(xdata) != len(data['language_supports']):
-                Logger.warning(f"Support languages missmatch for game {ret['name']}")
-            for x in xdata:
-                lang = self.support_data['languages'][x['language']] if x['language'] in self.support_data['languages'] else None
-                ltype = self.support_data['language_support_types'][x['language_support_type']] if x['language_support_type'] in self.support_data['language_support_types'] else None
-                ret['languages'].append({ 'lang': lang, 'type': ltype })
-        if 'player_perspectives' in data:
-            ret['player_perspectives'] = self._ref_field(data['player_perspectives'], self.support_data['player_perspectives'])
-        if 'keywords' in data:
-            ret['keywords'] = self._ref_field(data['keywords'], self.support_data['keywords'])
-        if 'themes' in data:
-            ret['themes'] = self._ref_field(data['themes'], self.support_data['themes'])
-        if 'game_localizations' in data:
-            ret['localizations'] = []
-            xdata = self._req('/game_localizations', f'fields *; limit 500; where game = {ret['id']};')
-            if len(xdata) != len(data['game_localizations']):
-                Logger.warning(f"Game localizations missmatch for game {ret['name']}")
-            for x in xdata:
-                reg = self.support_data['regions'][x['region']]['name'] if 'region' in x and x['region'] in self.support_data['regions'] else None
-                ret['localizations'].append({ 'name': x['name'], 'region': reg })
-        if 'age_ratings' in data:
-            ret['age_ratings'] = []
-            for x in data['age_ratings']:
-                xdata = self._req('/age_ratings', f'fields *; limit 500; where id = {x};')[0]
-                if not xdata:
-                    continue
-                arinf = {
-                    'organization': self.support_data['age_rating_organizations'][xdata['organization']],
-                    'rating': self.support_data['age_rating_categories'][xdata['rating_category']]['rating']
-                }
-                if 'rating_content_descriptions' in xdata:
-                    arinf['description'] = []
-                    for y in xdata['rating_content_descriptions']:
-                        arinf['description'].append(self.support_data['age_rating_descriptions'][y]['description'])
-                ret['age_ratings'].append(arinf)
-        if 'multiplayer_modes' in data:
-            xdata = self._req('/multiplayer_modes', f'fields *; limit 500; where game = {ret['id']};')
-            if len(xdata) != len(data['multiplayer_modes']):
-                Logger.warning(f"Invalid multiplayer modes for game '{ret['name']}'")
-            modes = ['campaigncoop', 'dropin', 'lancoop', 'offlinecoop', 'onlinecoop', 'splitscreen', 'splitscreenonline']
-            pcounts = ['offlinecoopmax', 'offlinemax', 'onlinecoopmax', 'onlinemax']
-            ret['multiplayer_modes'] = []
-            for x in xdata:
-                pinf = self.platforms.get_row(x['platform']) if 'platform' in x else None
-                pname = pinf['name'] if pinf else ''
-                mp_platf_inf = { 'platform': pname, 'multiplayer_modes': [] }
-                for y in modes:
-                    if y in x and x[y]:
-                        mp_platf_inf['multiplayer_modes'].append(y)
-                for y in pcounts:
-                    if y in x:
-                        mp_platf_inf[y] = x[y]
-                ret['multiplayer_modes'].append(mp_platf_inf)
-        if 'game_engines' in data:
-            ret['game_engines'] = []
-            for x in data['game_engines']:
-                xinf = self.engines.get_row(x)
-                if xinf:
-                    ret['game_engines'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
-        if 'collections' in data:
-            ret['collections'] = []
-            for x in data['collections']:
-                xinf = self.collections.get_row(x)
-                if xinf:
-                    ret['collections'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
-        if 'franchise' in data:
-            ret['franchises'] = []
-            xinf = self.franchises.get_row(data['franchise'])
-            if xinf:
-                ret['franchises'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
-        if 'franchises' in data:
-            ret['franchises'] = []
-            for x in data['franchises']:
-                xinf = self.franchises.get_row(x)
-                if xinf:
-                    ret['franchises'].append({ 'id': xinf['id'], 'name': xinf['name'], 'url': xinf['url'] })
-        if 'cover' in data:
-            xdata = self._req('/covers', f'fields *; limit 500; where id = {data['cover']};')[0]
-            covurl = "https:" + xdata['url'].replace("/t_thumb/", "/t_original/")
-            covpath = f"{self.covers_dir}/cover_{data['slug']}_{ret['id']}.jpg"
-            if not os.path.exists(covpath):
-                covpath = download_file(covpath, covurl)
-            if covpath:
-                ret['cover'] = { 'path': covpath, 'url': covurl }
-        if 'screenshots' in data:
-            ret['screenshots'] = self.import_game_screenshots(ret['id'], loadscreenshots)
-        if 'artworks' in data:
-            ret['artworks'] = self.import_game_artwork(ret['id'], loadartwork)
-        if 'videos' in data:
-            ret['videos'] = []
-            xdata = self._req('/game_videos', f'fields *; limit 500; where game = {ret['id']};')
-            if len(xdata) != len(data['videos']):
-                Logger.warning(f"Invalid videos for game '{ret['name']}'")
-            for x in xdata:
-                ret['videos'].append({ 'name': x['name'], 'url': 'https://www.youtube.com/watch?v=' + x['video_id'] })
-        if 'websites' in data:
-            ret['websites'] = []
-            xdata = self._req('/websites', f'fields *; limit 500; where game = {ret['id']};')
-            if len(xdata) != len(data['websites']):
-                Logger.warning(f"Invalid web sites for game '{ret['name']}'")
-            for x in xdata:
-                ret['websites'].append(x['url'])
-        if 'external_games' in data:
-            ret['external_sources'] = []
-            xdata = self._req('/external_games', f'fields *; limit 500; where game = {ret['id']};')
-            for x in xdata:
-                exinf = DataTable.extract_fields(x, ['name', 'url', 'year'])
-                if 'countries' in x:
-                    exinf['countries'] = []
-                    for cid in x['countries']:
-                        if str(cid) in self.countries:
-                            exinf['countries'].append(self.countries[str(cid)])
-                        else:
-                            Logger.warning(f"Invalid country reference {cid} for external game source")
-                if 'game_release_format' in x and x['game_release_format'] in self.support_data['game_release_formats']:
-                    exinf['format'] = self.support_data['game_release_formats'][x['game_release_format']]
-                if 'external_game_source' in x and x['external_game_source'] in self.support_data['external_game_sources']:
-                    exinf['source'] = self.support_data['external_game_sources'][x['external_game_source']]
-                if 'platform' in x:
-                    pinf = self.platforms.get_row(x['platform'])
-                    if pinf:
-                        exinf['platform'] = pinf['name']
-                    else:
-                        Logger.warning(f"Invalid platform reference {x['platform']} for external game source")
-                ret['external_sources'].append(exinf)
-
-        # Check time to beat stats
-        xdata = self._req('/game_time_to_beats', f'fields *; limit 500; where game_id = {ret['id']};')
-        if xdata and len(xdata) > 0:
-            xdata = xdata[0]
-            if 'count' in xdata and xdata['count'] > 0:
-                ret['time_count'] = xdata['count']
-            if 'normally' in xdata and xdata['normally'] > 0:
-                ret['time_normal'] = seconds_to_hours(xdata['normally'])
-            if 'hastily' in xdata and xdata['hastily'] > 0:
-                ret['time_minimal'] = seconds_to_hours(xdata['hastily'])
-            if 'completely' in xdata and xdata['completely'] > 0:
-                ret['time_full'] = seconds_to_hours(xdata['completely'])
-        return ret
-
-    def _parse_company(self, y: dict) -> dict:
-        """ Parse company data """
-        if 'status' in y:
-            if y['status'] in self.support_data['company_status']:
-                y['status'] = self.support_data['company_status'][y['status']]
-            else:
-                Logger.warning(f"Invalid company status: {y['status']}")
-        if 'logo' in y:
-            if self.company_logos.in_index(y['logo']):
-                imginf = self.company_logos.get_row(y['logo'])
-                imgpath = self.img_dir + '/' + 'company_' + str(y['slug']) + '.jpg'
-                y['logo_url'] = 'https:' + imginf['url'].replace("/t_thumb/", "/t_original/")
-                if os.path.exists(imgpath):
-                    y['logo'] = imgpath
-                else:
-                    y['logo'] = download_file(imgpath, y['logo_url'])
-            else:
-                Logger.warning(f"Company '{y['name']}' logo reference invalid: {y['logo']}")
-        if 'start_date' in y and y['start_date'] > 0:
-            try:
-                dt_object = datetime.datetime.fromtimestamp(y['start_date'])
-                if 'start_date_format' in y:
-                    y['start_date'] = self._extract_date(dt_object, self.support_data['date_formats'][y['start_date_format']])
-                else:
-                    y['start_date'] = dt_object.strftime("%Y-%m-%d")
-            except Exception as e:
-                Logger.warning(f"Company '{y['name']}' established date parsing failed. {e}")
-        if 'change_date' in y and y['change_date'] > 0:
-            try:
-                dt_object = datetime.datetime.fromtimestamp(y['change_date'])
-                if 'change_date_format' in y:
-                    y['change_date'] = self._extract_date(dt_object, self.support_data['date_formats'][y['change_date_format']])
-                else:
-                    y['change_date'] = dt_object.strftime("%Y-%m-%d")
-            except Exception as e:
-                Logger.warning(f"Company '{y['name']}' changed date parsing failed. {e}")
-        if 'country' in y:
-            if str(y['country']) in self.countries:
-                y['country'] = self.countries[str(y['country'])]
-            else:
-                Logger.warning(f"Unknown country code: {y['country']}")
-        y['developed'] = len(y['developed']) if 'developed' in y else 0
-        y['published'] = len(y['published']) if 'published' in y else 0
-        return y

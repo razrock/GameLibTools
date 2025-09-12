@@ -101,14 +101,10 @@ class Logger:
         """
         if Logger.loglevel < Logger.proglevel:
             return
-        start = False
-        end = False
         if not Logger.inprogmode:
             Logger.inprogmode = True
-            start = True
         if step >= total:
             Logger.inprogmode = False
-            end = True
 
         backtok = ''
         for i in range(len(Logger.prevmsg)):
@@ -116,11 +112,7 @@ class Logger:
         endtok = '' if Logger.inprogmode else '\n'
         proc = int(100.0 * float(step) / float(total)) if total > 0 else 0
 
-        txt = ''
-        txt += f"{Logger.PRGC}" if start else ''
-        txt += f"{backtok}{Logger.context}{msg} {step} / {total} ({proc}%)..."
-        txt += f"{Logger.ENDC}" if end else ''
-
+        txt = f"{Logger.PRGC}{backtok}{Logger.context}{msg} {step} / {total} ({proc}%)...{Logger.ENDC}"
         Logger.prevmsg = txt
         print(txt, end=endtok)
 

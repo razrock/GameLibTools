@@ -49,9 +49,9 @@ class DataTable:
                 z[y] = src[y]
         return z
 
-    def save(self):
+    def save(self, fpath: str = None):
         """ Save data table """
-        with open(self.filepath, 'w', newline='', encoding='utf8') as csvfile:
+        with open(self.filepath if not fpath else fpath, 'w', newline='', encoding='utf8') as csvfile:
             cols = self.get_titles()
             writer = csv.writer(csvfile, lineterminator='\r\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
             writer.writerow(cols)
@@ -60,16 +60,16 @@ class DataTable:
                 rdata = self._list_fields(row) if type(row) is dict else row
                 writer.writerow(rdata)
         self.issaved = True
-        Logger.log(f"Data table stored to {self.filepath}")
+        Logger.log(f"Data table stored to {self.filepath if not fpath else fpath}")
 
-    def load(self):
+    def load(self, fpath: str = None):
         """ Load data table from a file """
         self.lastupdate = 0
         self.index = {}
         self.missingcols = []
         checkheader = False
         rownum = 0
-        with open(self.filepath, 'r', newline='\r\n', encoding='utf8') as csvfile:
+        with open(self.filepath if not fpath else fpath, 'r', newline='\r\n', encoding='utf8') as csvfile:
             reader = csv.reader(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
             try:
                 for row in reader:
@@ -84,9 +84,9 @@ class DataTable:
                     self.add_row(y)
                     rownum += 1
             except Exception as e:
-                Logger.error(f"Loading data table {self.filepath} failed, row {rownum}. {e}")
+                Logger.error(f"Loading data table {self.filepath if not fpath else fpath} failed, row {rownum}. {e}")
         self.issaved = True
-        Logger.log(f"Table '{self.name}' loaded from {self.filepath} - {self.count()} entries")
+        Logger.log(f"Table '{self.name}' loaded from {self.filepath if not fpath else fpath} - {self.count()} entries")
 
     def reset(self):
         """ Reset data table """
@@ -136,6 +136,13 @@ class DataTable:
                 return None
         else:
             return next((item for item in self.data if item["id"] == rid), None)
+
+    def find_row(self, prop: str, val) -> dict|None:
+        """ Search for a row by cell value """
+        for row in self.data:
+            if prop in row and row[prop] == val:
+                return row
+        return None
 
     def has_file(self) -> bool:
         """ Check if data table file exists """
@@ -271,7 +278,7 @@ class DataTable:
                 elif dtyp == 'float':
                     ret[name] = float(src[ind]) if src[ind] != "" else None
                 elif dtyp == 'bool':
-                    ret[name] = int(src[ind]) != 0 if src[ind] != "" else None
+                    ret[name] = int(src[ind]) != 0 if src[ind] != "" else False
                 else:
                     ret[name] = src[ind]
                 ind += 1

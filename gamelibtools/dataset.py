@@ -8,6 +8,8 @@
     :license: See LICENSE.txt for full license information
 """
 import datetime
+import glob
+
 from gamelibtools.datatable import *
 from gamelibtools.igdbclient import IgdbClient
 from gamelibtools.logger import Logger
@@ -30,6 +32,8 @@ class DataSet:
         self.countries = {}
         self.sources = {}
         self.isloaded = False
+        self.bigtablesize = 100000
+        self.chunksize = 50000
         self.igdbapi = apiclient if apiclient is not None else IgdbClient()
         self._init()
 
@@ -50,8 +54,7 @@ class DataSet:
         for dtkey in self.datatables:
             if self.datatables[dtkey].syncable:
                 dt = self.datatables[dtkey]
-                Logger.log(f"Syncing table '{dt.name}'...")
-                self.fetch_table(dt, self._proc_row, f'where {dt.tscol} > {dt.lastupdate}')
+                self.sync_table(dt, self._proc_row)
 
         self.save()
 
@@ -81,32 +84,115 @@ class DataSet:
                 dt.save()
         else:
             fx = fproc if fproc is not None else self._proc_row
-            Logger.log(f"Fetching table '{dt.name}' from IGDB...")
-            self.fetch_table(dt, fx)
-            self._resolve_autorefs(dt)
-            dt.save()
+            self.import_table(dt, fx)
 
-    def get_table(self, dname: str) -> DataTable | None:
-        """ Get data table """
-        return self.datatables[dname] if dname in self.datatables else None
-
-    def fetch_table(self, dt: DataTable, fproc, query: str = ''):
-        """ Fetch data table """
-        total = self.igdbapi.count(dt.backend, f"{query};")
-        if total > 0:
-            Logger.log(f"{total} entries found. Importing data...")
-        else:
+    def sync_table(self, dt: DataTable, fproc = None):
+        """ Sync table data """
+        Logger.log(f"Syncing table '{dt.name}'...")
+        total = self.igdbapi.count(dt.backend, f"where {dt.tscol} > {dt.lastupdate};")
+        if total == 0:
             Logger.dbgmsg(f"No data found")
-        count = 0
+            return
+
         lschema = dt.get_full_schema()
-        while count < total:
+        fx = lambda row: dt.add_row(fproc(row, None, lschema, dt.tablekey))
+        self._fetch_table(dt, dt.get_fields(), total, fx, f'where {dt.tscol} > {dt.lastupdate}')
+
+    def import_table(self, dt: DataTable, fproc):
+        """ Import data table """
+        Logger.log(f"Fetching table '{dt.name}' from IGDB...")
+
+        # Count number of rows / entire table
+        total = self.igdbapi.count(dt.backend)
+        if total == 0:
+            Logger.dbgmsg(f"Table is empty")
+            return
+        remaining = total
+
+        # Check for current chunk
+        query = ''
+        maxid = 0
+        table_ts = 0
+        tmpfile = ''
+        store_chunks = total >= self.bigtablesize
+        if store_chunks:
+            chunk_fname_pref = dt.filepath.replace('.csv', '')
+            matching_files = glob.glob(f"{chunk_fname_pref}_*_*.tmp")
+            if matching_files and len(matching_files) == 1:
+                tmpfile = matching_files[0]
+                tokens = tmpfile.replace(chunk_fname_pref + '_', '').replace('.tmp', '').split('_')
+                if tokens and len(tokens) == 2:
+                    maxid = int(tokens[0])
+                    table_ts = int(tokens[1])
+                    query = f'where id > {maxid}'
+                    if table_ts > 0:
+                        query += f' & {dt.tscol} <= {table_ts}'
+                dt.load(tmpfile)
+            elif dt.tscol != 'id':
+                # Fetch current table timestamp
+                table_ts = self.igdbapi.maxval(dt.backend, dt.tscol)
+                if not table_ts:
+                    Logger.dbgmsg(f"Table is empty")
+                    return
+                query = f'where {dt.tscol} <= {table_ts}'
+
+            # Count remaining entries / remaining chunk
+            remaining = self.igdbapi.count(dt.backend, f"{query};")
+            if remaining == 0:
+                Logger.dbgmsg(f"No data found")
+                return
+
+            # Recheck counters
+            snap_size = self.igdbapi.count(dt.backend, f"where {dt.tscol} < {table_ts};") if table_ts > 0 and len(tmpfile) > 0 else total
+            if snap_size != remaining + dt.count():
+                Logger.warning(f"Data table '{dt.name}' remaining rows count doesn't match the expected number")
+            Logger.log(f"{total} entries found. Importing data..." if total == remaining else f"{remaining} / {total} entries found. Importing data...")
+        elif dt.tscol != 'id':
+            # Fetch current table timestamp
+            table_ts = self.igdbapi.maxval(dt.backend, dt.tscol)
+            if not table_ts:
+                Logger.dbgmsg(f"Table is empty")
+                return
+            query = f'where {dt.tscol} <= {table_ts}'
+
+            # Count number of rows / remaining chunk
+            remaining = self.igdbapi.count(dt.backend, f"{query};")
+            if remaining == 0:
+                Logger.dbgmsg(f"No data found")
+                return
+            Logger.log(f"{total} entries found. Importing data..." if total == remaining else f"{remaining} / {total} entries found. Importing data...")
+        else:
+            Logger.log(f"{total} entries found. Importing data...")
+
+        # Download data
+        lschema = dt.get_full_schema()
+        count = 0
+        while count < remaining:
             resp = self.igdbapi.req(dt.backend, f'fields {dt.get_fields()}; offset {count}; limit 500; sort {dt.sortcol} asc; {query};')
             for x in resp:
                 y = fproc(x, None, lschema, dt.tablekey)
+                if x['id'] > maxid:
+                    maxid = x['id']
                 dt.add_row(y)
             count += len(resp) if resp else 0
-            if total > 1000:
-                Logger.report_progress("Loading entries", count, total)
+            if store_chunks and count > 0 and count % self.chunksize == 0:
+                newfile = dt.filepath.replace('.csv', '') + f"_{maxid}_{table_ts}.tmp"
+                dt.save(newfile)
+                if len(tmpfile) > 0:
+                    os.remove(tmpfile)
+                tmpfile = newfile
+            if remaining > 1000:
+                Logger.report_progress("Loading entries", count, remaining)
+            if len(resp) == 0:
+                break
+
+        # Resolve autoreferences
+        self._resolve_autorefs(dt)
+
+        # Save data table1
+        dt.save()
+        if len(tmpfile) > 0:
+            os.remove(tmpfile)
 
     def expand_table(self, dt: DataTable, fproc, query: str = ''):
         """ Expand data table """
@@ -122,21 +208,16 @@ class DataSet:
         else:
             # Fetch data from the IGDB
             total = self.igdbapi.count(dt.backend, f"{query};")
-            if total > 0:
-                Logger.log(f"{total} entries found. Importing data...")
-            else:
+            if total == 0:
                 Logger.dbgmsg(f"No data found")
-            count = 0
-            while count < total:
-                resp = self.igdbapi.req(dt.backend, f'fields {mfields}; offset {count}; limit 500; sort {dt.sortcol} asc; {query};')
-                for x in resp:
-                    dstrow = dt.get_row(x['id'])
-                    if not dstrow:
-                        continue
-                    fproc(x, dstrow, lschema, dt.tablekey)
-                count += len(resp) if resp else 0
-                if total > 1000:
-                    Logger.report_progress("Loading entries", count, total)
+                return
+
+            fx = lambda xrow: fproc(xrow, dt.get_row(xrow['id']), lschema, dt.tablekey) if dt.get_row(xrow['id']) else None
+            self._fetch_table(dt, mfields, total, fx, query)
+
+    def get_table(self, dname: str) -> DataTable | None:
+        """ Get data table """
+        return self.datatables[dname] if dname in self.datatables else None
 
     def resolve_ref(self, idx: int|list, tbl: str, prop: str|list|None):
         """ Resolve data table reference """
@@ -220,7 +301,7 @@ class DataSet:
                 elif 'ref' in cx and cx['ref'] != tkey:
                     if vx:
                         isimg = 'type' in cx and cx['type'] == 'img'
-                        prop = cx['param'] if 'param' in cx else ('url' if isimg else 'name')
+                        prop = cx['param'] if 'param' in cx else (cx['prop'] if 'prop' in cx else ('url' if isimg else 'name'))
                         vx = self.resolve_ref(vx, cx['ref'], prop)
                         if isimg:
                             download = cx['download'] if 'download' in cx else True
@@ -251,7 +332,7 @@ class DataSet:
                 cname = col['name']
                 if cname not in row:
                     continue
-                prop = col['param'] if 'param' in col else 'name'
+                prop = col['param'] if 'param' in col else (col['prop'] if 'prop' in col else 'name')
                 row[cname] = self.resolve_ref(row[cname], col['ref'], prop)
 
     def _resolve_img(self, url: str|list, pref: str, iname: str, download: bool) -> dict|list:
@@ -264,6 +345,18 @@ class DataSet:
         else:
             return self._fetch_img(url, pref, iname, download)
 
+    def _fetch_table(self, dt: DataTable, fields: str, total: int, fproc, query: str):
+        """ Fetch table data """
+        Logger.log(f"{total} entries found. Importing data...")
+        count = 0
+        while count < total:
+            resp = self.igdbapi.req(dt.backend, f'fields {fields}; offset {count}; limit 500; sort {dt.sortcol} asc; {query};')
+            for x in resp:
+                fproc(x)
+            count += len(resp) if resp else 0
+            if total > 1000:
+                Logger.report_progress("Loading entries", count, total)
+
     def _fetch_ref(self, dt:DataTable, idx: int, prop: str | list | None):
         """ Fetch reference value """
         if not dt.in_index(idx):
@@ -271,7 +364,7 @@ class DataSet:
             if resp is None or len(resp) == 0:
                 Logger.warning(f"Invalid '{dt.name}' table reference: {idx}")
                 return None
-            src = self._proc_row(resp[0], dt.get_full_schema(), dt.tablekey)
+            src = self._proc_row(resp[0], None, dt.get_full_schema(), dt.tablekey)
             dt.add_row(src)
         else:
             src = dt.get_row(idx)

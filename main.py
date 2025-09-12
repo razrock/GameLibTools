@@ -27,25 +27,42 @@ def main():
     #
     # sync                      Sync database
     # stats                     Print DB stats
+    # import game [id]          Import game data
+    # import artwork [id]       Import game artwork
+    # import screenshots [id]   Import game screenshots
+    # import platform [name]    Import game data for the entire platform
     # quit                      Exit program
     #
     # =============================================================================================
 
     # Command processor loop
+    cmd = args.cmd.lower() if args.cmd else ''
     try:
         datamgr = IgdbSync(args.datadir)
         datamgr.load()
         while True:
-            cmd = input("IGDB :> ")
-            match cmd:
-                case 'sync':
-                    datamgr.sync()
-                case 'stats':
-                    datamgr.calc_stats()
-                case 'quit':
-                    break
-                case _:
-                    print(f"Unknown command ({cmd}). Please try again")
+            cmd = input("IGDB :> ").lower() if cmd == '' else cmd
+            if cmd == 'sync':
+                datamgr.sync()
+            elif cmd == 'stats':
+                datamgr.calc_stats()
+            elif cmd == 'quit':
+                break
+            elif cmd.startswith('import game '):
+                gid = int(cmd.replace('import game ', ''))
+                datamgr.import_game(gid)
+            elif cmd.startswith('import artwork '):
+                gid = int(cmd.replace('import artwork ', ''))
+                datamgr.import_artwork(gid)
+            elif cmd.startswith('import screenshots '):
+                gid = int(cmd.replace('import screenshots ', ''))
+                datamgr.import_screenshots(gid)
+            elif cmd.startswith('import platform '):
+                pname = int(cmd.replace('import platform ', ''))
+                datamgr.import_platform_games(pname)
+            else:
+                print(f"Unknown command ({cmd}). Please try again")
+            cmd = ''
     except Exception as conerr:
         print('Error occurred: ' + conerr.__str__())
         sys.exit(1)
