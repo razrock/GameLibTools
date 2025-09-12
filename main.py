@@ -58,7 +58,8 @@ def main():
                 gid = int(cmd.replace('import screenshots ', ''))
                 datamgr.import_screenshots(gid)
             elif cmd.startswith('import platform '):
-                pname = int(cmd.replace('import platform ', ''))
+                tok = cmd.replace('import platform ', '')
+                pname = int(tok) if tok.isnumeric() else tok
                 datamgr.import_platform_games(pname)
             else:
                 print(f"Unknown command ({cmd}). Please try again")

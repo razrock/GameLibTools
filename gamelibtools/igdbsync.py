@@ -26,6 +26,7 @@ class IgdbSync:
         self.config_dir = './config'
         self.log_dir = './logs'
         self.data_dir = datapath if datapath else './data'
+        self.tables_dir = self.data_dir + '/tables'
         self.screenshot_dir = self.data_dir + '/screenshots'
         self.covers_dir = self.data_dir + '/covers'
         self.artwork_dir = self.data_dir + '/artwork'
@@ -34,7 +35,7 @@ class IgdbSync:
         self.platform_stats_file = 'igdb_platform_stats.csv'
         self.apiclient = IgdbClient()
         self.dataset = DataSet(self.apiclient, self.data_dir, self.config_dir)
-        self.games_manifest = DataTable("games_manifest", "Games manifest", f"{self.data_dir}/igdb_games_manifest.csv", '/games', self.dataset.sources['games_manifest']['schema'])
+        self.games_manifest = DataTable("games_manifest", "Games manifest", f"{self.tables_dir}/igdb_games_manifest.csv", '/games', self.dataset.sources['games_manifest']['schema'])
         self.games_plaforms_index = {}
         self.games_plaforms_index_cols = ['id', 'name', 'game_type', 'release_dates', 'genres', 'metascore', 'rating']
         self.isloaded = False
@@ -43,6 +44,8 @@ class IgdbSync:
             os.makedirs(self.log_dir)
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
+        if not os.path.exists(self.tables_dir):
+            os.makedirs(self.tables_dir)
         if not os.path.exists(self.screenshot_dir):
             os.makedirs(self.screenshot_dir)
         if not os.path.exists(self.covers_dir):
@@ -108,7 +111,7 @@ class IgdbSync:
 
     def import_game(self, gid: int, loadscreenshots: bool = True, loadartwork: bool = True, overwrite: bool = False):
         """ Import and store game card """
-        Logger.log(f"Importing game card for game ID: {gid}")
+        Logger.sysmsg(f"Importing game card for game ID: {gid}")
         if not self.isloaded:
             Logger.warning(f"Unable to import game data. Games manifest not loaed")
             return
@@ -121,7 +124,7 @@ class IgdbSync:
         Logger.set_context(f"{gid}: {gameinf['name']}")
         fpath = self.gamecards_dir + f'/{gid:06}_{gameinf['slug']}.json'
         if not overwrite and os.path.exists(fpath):
-            Logger.dbgmsg(f"Game card already downloaded")
+            Logger.log(f"Game card already downloaded")
             Logger.clear_context()
             return
 
@@ -141,8 +144,36 @@ class IgdbSync:
         Logger.dbgmsg(f"Saving game card...")
         with open(fpath, 'w', encoding='utf-8') as f:
             json.dump(gameinf, f,  indent=4)
-        Logger.log(f"Game card for '{gameinf['name']}' saved to '{fpath}'")
         Logger.clear_context()
+        Logger.log(f"Game card for '{gameinf['name']}' saved to '{fpath}'")
+
+    def import_platform_games(self, pkey: str|int, loadscreenshots: bool = True, loadartwork: bool = False, overwrite: bool = False):
+        """ Load all games for a specified platform """
+        pinf = None
+        if type(pkey) is int:
+            pinf = self.dataset.get_table('platforms').get_row(pkey)
+        else:
+            alts = ['slug', 'abbreviation', 'name']
+            for prop in alts:
+                pinf = self.dataset.get_table('platforms').find_row(prop, pkey)
+                if pinf:
+                    break
+        if not pinf or 'id' not in pinf or pinf['id'] not in self.games_plaforms_index:
+            Logger.error(f"Unable to immport games for platform '{pkey}'. Invalid platform key/id")
+            return
+
+        platform_index = self.games_plaforms_index[pinf['id']]
+        if not platform_index or platform_index.count() == 0:
+            Logger.error(f"Unable to immport games for platform '{pinf['name']}'. Platform index is missing / empty")
+            return
+
+        total = platform_index.count()
+        count = 0
+        Logger.sysmsg(f"Importing {total} games for platform '{pinf['name']}'")
+        for gid in platform_index.index:
+            self.import_game(gid, loadscreenshots, loadartwork, overwrite)
+            count += 1
+            Logger.report_progress("Importing games", count, total)
 
     def import_screenshots(self, gid: int):
         """ Load game screenshots """
@@ -400,7 +431,7 @@ class IgdbSync:
 
     def _import_game_images(self, gid: int, iname: str, prop: str, dtable: str, imgdir: str, fpref: str):
         """ Import / load game related images """
-        Logger.log(f"Importing game {iname} for game ID: {gid}")
+        Logger.sysmsg(f"Importing game {iname} for game ID: {gid}")
         gameinf = self.games_manifest.get_row(gid)
         if gameinf is None:
             Logger.error(f"Unable to load game {iname}. Invalid game ID")
@@ -662,47 +693,3 @@ class IgdbSync:
                 download_file(imgpath, imgurl)
             cnt += 1
         return rx
-
-class IgdbSyncL:
-    """ IGDB data / sync manager """
-
-    def import_games(self):
-        """ Import games using the IGDB sources configuration """
-        cpath = self.config_dir + '/igdbsources.json'
-        if not os.path.exists(cpath):
-            return
-        sources = json.load(open(cpath))
-        Logger.sysmsg(f"Importing games from the IGDB...")
-        if self.games_manifest.count() == 0:
-            Logger.warning(f"Aborting operation. Games manifest not loaded...")
-            return
-
-        # Index platform games
-        reindex = False
-        skipunsorted = 'skipunsorted' in sources and sources['skipunsorted']
-        for pinf in self.platforms.data:
-            fpath = self.gameindex_dir + f'/gameindex_igdb_{pinf['slug']}.csv'
-            if not os.path.exists(fpath):
-                reindex = True
-                break
-        if not reindex and not skipunsorted and not os.path.exists(self.gameindex_dir + f'/gameindex_igdb_unsorted.csv'):
-            reindex = True
-        if reindex:
-            self._index_platform_games(skipunsorted)
-        else:
-            # Load platform indices
-            for pinf in self.platforms.data:
-                self._load_platform_games(pinf['id'], pinf['name'], pinf['slug'])
-            if not skipunsorted:
-                self._load_platform_games(0, "Unsorted games", "unsorted")
-
-        # Validating platform sources
-        Logger.log(f"Validating IGDB sources...")
-        for pid in sources['platforms']:
-            pinf = self.platforms.get_row(pid)
-            if not pinf:
-                Logger.warning(f"Skipping platform {pid}. Invalid platform ID...")
-                continue
-
-        # Import game cards
-        # TODO: Import game cards from platform index -> Apply filtering, store current ID

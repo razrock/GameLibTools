@@ -27,6 +27,7 @@ class DataSet:
         """
         self.cfg_dir = cfgpath
         self.data_dir = datapath
+        self.tables_dir = self.data_dir + '/tables'
         self.img_dir = self.data_dir + '/images'
         self.datatables = {}
         self.countries = {}
@@ -250,6 +251,8 @@ class DataSet:
         """ Initialize data tables """
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
+        if not os.path.exists(self.tables_dir):
+            os.makedirs(self.tables_dir)
         if not os.path.exists(self.img_dir):
             os.makedirs(self.img_dir)
 
@@ -261,7 +264,7 @@ class DataSet:
         self.sources = json.load(open(self._get_sources_path()))
         for name, cfg in self.sources['tables'].items():
             vname = cfg['name'] if 'name' in cfg else name
-            fname = os.path.normpath(self.data_dir + '/' + (cfg['file'] if 'file' in cfg else f"igdb_{name}.csv"))
+            fname = os.path.normpath(self.tables_dir + '/' + (cfg['file'] if 'file' in cfg else f"igdb_{name}.csv"))
             vurl = cfg['endpoint'] if 'endpoint' in cfg else f'/{name}'
             cansync = cfg['sync'] if 'sync' in cfg else True
             schema = cfg['schema'] if 'schema' in cfg else None
